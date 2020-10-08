@@ -867,7 +867,7 @@ void tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsig
             char *temp_SNI = NULL;
             temp_SNI = get_TLS_SNI(buffer, tcphdr_len);
             if (!temp_SNI) {
-                strcpy(header.sni, "Could not find SNI");
+                strcpy(header.sni, "(Could not find SNI)");
             }
             else {
                 strcpy(header.sni, temp_SNI);
@@ -885,7 +885,7 @@ void tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsig
             header.ssl_ver = 0;
             header.packets = 1;
             header.size = ((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1]); //ntohs(buffer[]); //test it pls
-            strcpy(header.sni, "SSLv2 no SNI provided");
+            strcpy(header.sni, "(SSLv2 no SNI provided)");
             DLInsertLast(&connection_list, header, ntohs(tcph->th_sport));
         } else {
 //    	    printf("test portu %d\n", ntohs(tcph->th_sport));
