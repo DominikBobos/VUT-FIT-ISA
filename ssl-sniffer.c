@@ -10,7 +10,7 @@
 #include <signal.h>				//						//
 #include <stdlib.h> 			//						//
 #include <stdbool.h>			//						//
-#include <ctype.h>				//	C-dependencies		//
+//#include <ctype.h>				//	C-dependencies		//
 #include <string.h>				//						//
 #include <getopt.h>				//						//
 #include <time.h>				//						//
@@ -24,6 +24,452 @@
 #include <netinet/ip6.h> 		//////////////////////////
 
 
+/*
+*	Struct with needed info
+* 	for output
+*/
+typedef struct pckt_info
+{
+    char src_addr[1025];	//contains source IP
+    char dest_addr[1025];	//contains destination IP
+    unsigned src_port;		//contains source  PORT
+    unsigned dest_port;		//contains destination  PORT
+    char sni[1025];         // SNI
+    long start_time;         //
+    long start_microsec;
+    int packets;             // packets count in connection
+    int size;                // data in Bytes transfered in connection
+
+} pckt_info;
+
+typedef struct tDLElem {                 /* prvek dvousměrně vázaného seznamu */
+    int port;
+    struct pckt_info data;                                            /* užitečná data */
+    struct tDLElem *lptr;          /* ukazatel na předchozí prvek seznamu */
+    struct tDLElem *rptr;        /* ukazatel na následující prvek seznamu */
+} *tDLElemPtr;
+
+typedef struct {                                  /* dvousměrně vázaný seznam */
+    tDLElemPtr First;                      /* ukazatel na první prvek seznamu */
+    tDLElemPtr Act;                     /* ukazatel na aktuální prvek seznamu */
+    tDLElemPtr Last;                    /* ukazatel na posledni prvek seznamu */
+} tDLList;
+
+
+void DLInitList (tDLList *L) {
+/*
+** Provede inicializaci seznamu L před jeho prvním použitím (tzn. žádná
+** z následujících funkcí nebude volána nad neinicializovaným seznamem).
+** Tato inicializace se nikdy nebude provádět nad již inicializovaným
+** seznamem, a proto tuto možnost neošetřujte. Vždy předpokládejte,
+** že neinicializované proměnné mají nedefinovanou hodnotu.
+**/
+
+///tym ze inicializujem, vsetko nastavim na NULL lebo este nic ine nemam
+    L->Act = NULL;
+    L->Last = NULL;
+    L->First = NULL;
+}
+
+void DLDisposeList (tDLList *L) {
+/*
+** Zruší všechny prvky seznamu L a uvede seznam do stavu, v jakém
+** se nacházel po inicializaci. Rušené prvky seznamu budou korektně
+** uvolněny voláním operace free.
+**/
+
+///pripad kedy je list prazdny
+    if(L->First == NULL && L->Act == NULL && L->Last == NULL)
+    {
+        return;
+    }
+
+    struct tDLElem *elem_ptr = L->First;
+
+    while(elem_ptr->rptr != NULL)
+    {
+        elem_ptr = elem_ptr->rptr;	///postupne prechadzam po zozname
+        free(elem_ptr->lptr);
+    }
+    free(elem_ptr);		///uvolnenie posledneho lebo cyklus skoncil na poslednom
+
+    DLInitList(L);
+}
+
+void DLInsertFirst (tDLList *L, pckt_info val, int port) {
+/*
+** Vloží nový prvek na začátek seznamu L.
+** V případě, že není dostatek paměti pro nový prvek při operaci malloc,
+** volá funkci DLError().
+**/
+
+    struct tDLElem *new_elem = (struct tDLElem *) malloc(sizeof(struct tDLElem));
+    if(new_elem == NULL)	///kontrola uspesnosti malloc
+    {
+        return;
+    }
+    new_elem->port = port;
+    new_elem->data = val;
+    new_elem->rptr = L->First; 			///novy vlozeny elem napravo ukazuje na predtym prveho
+    new_elem->lptr = NULL; 				/// novy vlozeny elem nalavo ukazuje na NULL
+
+    if (L->First != NULL) { 			///tam uz prvy bol
+        L->First->lptr = new_elem; 			///Stary prvy uz nebude ukazovat nalavo na NULL ale na novy prvy
+
+    }
+    else{ 								/// insert do prázdného listu
+        L->Last = new_elem;
+    }
+
+    L->First = new_elem;				/// nastavenie ukazatela na začiatok
+}
+
+void DLInsertLast(tDLList *L, pckt_info val, int port) {
+/*
+** Vloží nový prvek na konec seznamu L (symetrická operace k DLInsertFirst).
+** V případě, že není dostatek paměti pro nový prvek při operaci malloc,
+** volá funkci DLError().
+**/
+
+    struct tDLElem *new_elem = (struct tDLElem *) malloc(sizeof(struct tDLElem));
+    if(new_elem == NULL)	///kontrola uspesnosti malloc
+    {
+        return;
+    }
+    new_elem->port = port;
+    new_elem->data = val;
+    new_elem->rptr = NULL; 				///novy vlozeny elem napravo ukazuje na NULL
+    new_elem->lptr = L->Last; 			/// novy vlozeny elem nalavo ukazuje na predtym posledny
+
+    if (L->Last != NULL) { 				/// tam uz bol posledny
+        L->Last->rptr = new_elem; 			///Stary posledny uz nebude ukazovat napravo na NULL ale na novy prvy
+
+    }
+    else{ 								/// insert do prázdného listu
+        L->First = new_elem;
+    }
+
+    L->Last = new_elem;				/// nastavenie ukazatela noveho prvku na koniec
+}
+
+void DLFirst (tDLList *L) {
+/*
+** Nastaví aktivitu na první prvek seznamu L.
+** Funkci implementujte jako jediný příkaz (nepočítáme-li return),
+** aniž byste testovali, zda je seznam L prázdný.
+**/
+
+    L->Act = L->First;
+}
+
+void DLLast (tDLList *L) {
+/*
+** Nastaví aktivitu na poslední prvek seznamu L.
+** Funkci implementujte jako jediný příkaz (nepočítáme-li return),
+** aniž byste testovali, zda je seznam L prázdný.
+**/
+    L->Act = L->Last;
+}
+
+void DLCopyFirst (tDLList *L, int *port) {
+/*
+** Prostřednictvím parametru val vrátí hodnotu prvního prvku seznamu L.
+** Pokud je seznam L prázdný, volá funkci DLError().
+**/
+    if (L->First == NULL)
+        return;
+    else
+        *port = L->First->port;
+}
+
+void DLCopyLast (tDLList *L, int *port) {
+/*
+** Prostřednictvím parametru val vrátí hodnotu posledního prvku seznamu L.
+** Pokud je seznam L prázdný, volá funkci DLError().
+**/
+    if (L->First == NULL)
+        return;
+    else
+        *port = L->Last->port;
+}
+
+void DLDeleteFirst (tDLList *L) {
+/*
+** Zruší první prvek seznamu L. Pokud byl první prvek aktivní, aktivita
+** se ztrácí. Pokud byl seznam L prázdný, nic se neděje.
+**/
+    if (L->First == NULL)
+        return;
+
+    struct tDLElem *elem_ptr = L->First;
+
+    if(L->First == L->Last)
+    {
+        DLInitList(L);			///ak je v liste jediny prvok tak zanikne a inicialzujeme znova
+    }
+    else if (L->First == L->Act)
+    {
+        L->Act = NULL;
+        L->First = L->First->rptr;
+        L->First->lptr = NULL;
+    }
+    else
+    {
+        L->First = L->First->rptr;
+        L->First->lptr = NULL;
+    }
+
+    free(elem_ptr);
+}
+
+void DLDeleteLast (tDLList *L) {
+/*
+** Zruší poslední prvek seznamu L. Pokud byl poslední prvek aktivní,
+** aktivita seznamu se ztrácí. Pokud byl seznam L prázdný, nic se neděje.
+**/
+    if (L->First == NULL)
+        return;
+    else
+    {
+        struct tDLElem *elem_ptr = L->Last;
+
+        if(L->First == L->Last)
+        {
+            DLInitList(L);		///ak je v liste jediny prvok tak zanikne a inicialzujeme znova
+        }
+        else if (L->Last == L->Act)
+        {
+            L->Act = NULL;
+            L->Last = L->Last->lptr;
+            L->Last->rptr = NULL;
+        }
+        else
+        {
+            L->Last = L->Last->lptr;
+            L->Last->rptr = NULL;
+        }
+
+
+        free(elem_ptr);
+    }
+}
+
+void DLPostDelete (tDLList *L) {
+/*
+** Zruší prvek seznamu L za aktivním prvkem.
+** Pokud je seznam L neaktivní nebo pokud je aktivní prvek
+** posledním prvkem seznamu, nic se neděje.
+**/
+    if(L->First == NULL && L->Act == NULL && L->Last == NULL) ///ked je prazdny list
+    {
+        return;
+    }
+
+    if((L->Act == L->Last ) || (L->Act == NULL))
+        return;
+    else
+    {
+        struct tDLElem *elem_ptr = L->Act->rptr;		///nastavim na prvok ktory chcem mazat
+        if (elem_ptr == L->Last)						///pripad kedy je mazany prvok aj poslednym
+        {
+            L->Act->rptr = NULL;
+            L->Last = L->Act;
+        }
+        else
+        {
+            struct tDLElem *elem_ptr_next = elem_ptr->rptr;	///nastavim na prvok napravo od mazaneho
+            L->Act->rptr = elem_ptr_next;			///aktivny ukazuje na prvok napravo za mazanym
+            elem_ptr_next->lptr = L->Act;			///nalavo od mazaneho prvku ukazuje na aktivny
+        }
+        free(elem_ptr);
+    }
+}
+
+void DLPreDelete (tDLList *L) {
+/*
+** Zruší prvek před aktivním prvkem seznamu L .
+** Pokud je seznam L neaktivní nebo pokud je aktivní prvek
+** prvním prvkem seznamu, nic se neděje.
+**/
+    if(L->First == NULL && L->Act == NULL && L->Last == NULL) ///ked je list prazdny
+    {
+        return;
+    }
+
+    if((L->Act == L->First ) || (L->Act == NULL))
+        return;
+    else
+    {
+        struct tDLElem *elem_ptr = L->Act->lptr;		///nastavim na prvok ktory chcem mazat
+        if (elem_ptr == L->First)		///pripad kedy je mazany prvok aj prvym
+        {
+            L->Act->lptr = NULL;
+            L->First = L->Act;
+        }
+        else
+        {
+            struct tDLElem *elem_ptr_next = elem_ptr->lptr;	///nastavim na prvok nalavo od mazaneho
+            L->Act->lptr = elem_ptr_next;			///aktivny ukazuje na prvok nalavo od mazaneho
+            elem_ptr_next->rptr = L->Act;			///nalavo od mazaneho prvku ukazuje na aktivny
+        }
+
+        free(elem_ptr);
+    }
+}
+
+void DLPostInsert (tDLList *L, pckt_info val, int port) {
+/*
+** Vloží prvek za aktivní prvek seznamu L.
+** Pokud nebyl seznam L aktivní, nic se neděje.
+** V případě, že není dostatek paměti pro nový prvek při operaci malloc,
+** volá funkci DLError().
+**/
+
+    if (L->Act == NULL)
+        return;
+    else
+    {
+        struct tDLElem *new_elem = (struct tDLElem *) malloc(sizeof(struct tDLElem));
+
+        if(new_elem == NULL)	///kontrola uspesnosti malloc
+        {
+            return;
+        }
+        else if (L->Act == L->Last)
+        {
+            L->Act->rptr = new_elem;
+            new_elem->lptr = L->Act;
+            new_elem->rptr = NULL;
+            L->Last = new_elem;
+            new_elem->data = val;
+            new_elem->port = port;
+        }
+        else
+        {
+            struct tDLElem *elem_ptr = L->Act->rptr;		///ukazatel na prvok za aktivnym
+            L->Act->rptr = new_elem;
+            elem_ptr->lptr = new_elem;
+            new_elem->lptr = L->Act;
+            new_elem->rptr = elem_ptr;
+            new_elem->data = val;
+        }
+    }
+}
+
+void DLPreInsert (tDLList *L, pckt_info val, int port) {
+/*
+** Vloží prvek před aktivní prvek seznamu L.
+** Pokud nebyl seznam L aktivní, nic se neděje.
+** V případě, že není dostatek paměti pro nový prvek při operaci malloc,
+** volá funkci DLError().
+**/
+
+    if (L->Act == NULL)
+        return;
+    else
+    {
+        struct tDLElem *new_elem = (struct tDLElem *) malloc(sizeof(struct tDLElem));
+        if(new_elem == NULL)	///kontrola uspesnosti malloc
+        {
+            return;
+        }
+        else if (L->Act == L->First)
+        {
+            L->Act->lptr = new_elem;
+            new_elem->rptr = L->Act;
+            new_elem->lptr = NULL;
+            L->First = new_elem;
+            new_elem->data = val;
+            new_elem->port = port;
+
+        }
+        else
+        {
+            struct tDLElem *elem_ptr = L->Act->lptr;		///ukazatel na prvok pred aktivnym
+            L->Act->lptr = new_elem;
+            elem_ptr->rptr = new_elem;
+            new_elem->rptr = L->Act;
+            new_elem->lptr = elem_ptr;
+            new_elem->data = val;
+
+        }
+    }
+}
+
+void DLCopy (tDLList *L, int *port) {
+/*
+** Prostřednictvím parametru val vrátí hodnotu aktivního prvku seznamu L.
+** Pokud seznam L není aktivní, volá funkci DLError ().
+**/
+    if (L->Act == NULL)
+        return;
+    else
+        *port = L->Act->port;
+}
+
+void DLActualize (tDLList *L, pckt_info val, int port) {
+/*
+** Přepíše obsah aktivního prvku seznamu L.
+** Pokud seznam L není aktivní, nedělá nic.
+**/
+    if (L->Act == NULL)
+        return;
+    else
+        L->Act->port = port;
+        L->Act->data = val;
+}
+
+void DLSucc (tDLList *L) {
+/*
+** Posune aktivitu na následující prvek seznamu L.
+** Není-li seznam aktivní, nedělá nic.
+** Všimněte si, že při aktivitě na posledním prvku se seznam stane neaktivním.
+**/
+    if (L->Act == NULL)
+        return;
+    else
+    {
+        if(L->Last == L->Act)
+            L->Act = NULL;
+        else
+        {
+            L->Act = L->Act->rptr;
+        }
+    }
+}
+
+
+void DLPred (tDLList *L) {
+/*
+** Posune aktivitu na předchozí prvek seznamu L.
+** Není-li seznam aktivní, nedělá nic.
+** Všimněte si, že při aktivitě na prvním prvku se seznam stane neaktivním.
+**/
+
+    if (L->Act == NULL)
+        return;
+    else
+    {
+        if(L->First == L->Act)
+            L->Act = NULL;
+        else
+        {
+            L->Act = L->Act->lptr;
+        }
+    }
+}
+
+int DLActive (tDLList *L) {
+/*
+** Je-li seznam L aktivní, vrací nenulovou hodnotu, jinak vrací 0.
+** Funkci je vhodné implementovat jedním příkazem return.
+**/
+    return (L->Act != NULL)? 1 : 0 ;
+}
+
+
+tDLList connection_list; //list to track SSL/TLS connections
+
 int show_interfaces() 
 {
 	char errbuf[PCAP_ERRBUF_SIZE]; 		//PCAP macro
@@ -33,7 +479,6 @@ int show_interfaces()
 	if (pcap_findalldevs(&alldevs, errbuf) == -1)
 	{
 		fprintf(stderr,"Error in pcap_findalldevs: %s\n", errbuf);
-		return 0;
 	}
 	// Print the list to user
 	//  MODIFICATED from
@@ -52,6 +497,13 @@ int show_interfaces()
 	return 0;
 }
 
+/*
+*	Function to properly catch keyboard interruptions
+*/
+void intHandler()
+{
+    exit(0);
+}
 
 int print_help() 
 {
@@ -60,6 +512,25 @@ int print_help()
 	puts("-r <file> pcapng file to get SSL connection from ");
 	return 0;
 }
+
+
+///*
+//*	Struct with needed info
+//* 	for output
+//*/
+//struct pckt_info
+//{
+//    char src_addr[1025];	//contains source IP or FQDN
+//    char dest_addr[1025];	//contains destination IP or FQDN
+//    unsigned src_port;		//contains source  PORT
+//    unsigned dest_port;		//contains destination  PORT
+//    int header_size;		// size of the full packet header
+//    long start_time;         //
+//    long start_microsec;
+//    int packets;             // packets count in connection
+//    int size;                // data in Bytes transfered in connection
+//};
+
 
 int args_parse(int argc, char *argv[], char *iface, char *rfile)
 {
@@ -115,14 +586,348 @@ int args_parse(int argc, char *argv[], char *iface, char *rfile)
 	return 30;					// both -r and -i was entered
 }
 
+// /*
+// *	Function for right output format
+// *	prints spaces 'count' times
+// */
+// void add_space(int count)
+// {
+//     if (count <= 22)	//because of the extra space between 8 bytes
+//         --count;
+//     char spaces[count];
+//     for (int i = 0; i < count; i++)
+//         spaces[i] = ' ';
+//     spaces[count] = '\0';
+//     printf("%s",spaces);
+// }
+
+void print_data(char *time, long microsec, pckt_info packet_info,
+                 const unsigned data_len, const u_char *data)
+{
+	if (packet_info.src_port == 443) {
+		printf("%s.%ld,%s,%u,%s\n\n", time, microsec,
+	    packet_info.dest_addr, packet_info.dest_port,
+	    packet_info.src_addr);
+	}
+	else {
+		printf("%s.%ld,%s,%u,%s\n\n", time, microsec,
+	    packet_info.src_addr, packet_info.src_port,
+	    packet_info.dest_addr);
+	}
+}
+//     int header_end = packet_info.header_size;	// header size
+//     char ascii;									// variable for printing in ascii
+//     int end_case = 0;							// to correctly show first column
+//     int underflow = 0;
+//     for (int i = 0; i <= (int)data_len/16+1; i++)
+//     {
+//         //this is magic, and hours of thinking //forgive me this, but it works
+//         end_case += 16;
+//         if (i*16 < header_end && header_end <= (i+1)*16) {
+//             end_case = header_end;
+//             printf("0x%04x",header_end);
+//         }
+//         else if (end_case > (int)data_len){
+//             printf("0x%04x",(int)data_len);
+//         }
+//         else if (end_case == (int)data_len){
+//             printf("--------------------------------------------------------------------------\n\n");
+//             break;
+//         }
+//         else {
+//             printf("0x%04x",end_case);
+//         }
+
+//         for (int k = 0; k < 16; k++)
+//         {
+//             if (i*16+k-underflow == (int)data_len) {add_space((16 - k)*3+1); break;}
+//             if (i*16+k == header_end) { add_space((16 - k)*3+1); break;}
+//             if (k == 8) {printf(" ");}
+//             printf(" %02x", data[i*16+k-underflow] & 0xff);
+//         }
+//         printf("  ");
+//         for (int k = 0; k < 16; k++)
+//         {
+//             if (i*16+k-underflow == (int)data_len) {
+//                 printf("\n--------------------------------------------------------------------------\n\n");
+//                 return;
+//             }
+//             if (i*16+k == header_end) {
+//                 underflow = i*16 - header_end + 16;
+//                 printf("\n"); break;
+//             }
+//             if (k == 8) {printf(" ");}
+//             ascii = data[i*16+k-underflow];
+//             if (!isprint((int)ascii)) {ascii = 46;}
+//             printf("%c", ascii);
+//         }
+//         printf("\n");
+//     }
+
+// }
+
+
+
+/*
+*	Gets FQDN from IP, when FQDN could not be found
+*	returns IP address back
+*	MODIFICATED from
+*	SOURCE: https://cboard.cprogramming.com/c-programming/169902-getnameinfo-example-problem.html
+* 	AUTHOR: algorism
+*/
+char *host_name(struct in_addr ip_addr)
+{
+    char *ip = malloc(NI_MAXHOST * sizeof(char));	//buffer about size of the max host
+    if (!ip)
+    {	return NULL;}
+    strcpy(ip, inet_ntoa(ip_addr));	//converts to readable address
+    if (ip == NULL)
+    {
+        perror("inet_ntoa");
+        return NULL;
+    }
+    return ip;
+}
+
+
+/*
+*	Gets FQDN from IPv6, when FQDN could not be found
+*	returns IP address back
+*	MODIFICATED from
+*	SOURCE: https://cboard.cprogramming.com/c-programming/169902-getnameinfo-example-problem.html
+* 	AUTHOR: algorism
+*/
+char *host_nameIPv6(struct in6_addr ip_addr)
+{
+    char *ip = malloc(NI_MAXHOST * sizeof(char));	//INET6_ADDRSTRLEN
+    if (!ip)
+    {	return NULL;}
+    if (inet_ntop(AF_INET6, &ip_addr, ip, NI_MAXHOST) == NULL)	//converts to readable address
+    {
+        perror("inet_ntop");
+        return NULL;
+    }
+    return ip;
+}
+
+
+
+/*
+*	Function for processing TCP protocol
+*	gets buffer and function gets from it
+*	source and destination port and
+*	source and destination ip's from IP header
+*	returns struct pckt_info
+* 	It is modification from
+* 	SOURCE: https://gist.github.com/fffaraz/7f9971463558e9ea9545
+*	AUTHOR: Faraz Fallahi
+*/
+void tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6)
+{
+    pckt_info header;
+    int iphdr_len;
+    char *temp_src = NULL;
+    char *temp_dest = NULL;
+
+    if (ipv6 == true)
+    {
+        struct ip6_hdr *iph = (struct ip6_hdr *)(buffer + sizeof(struct ether_header));
+        iphdr_len = 40; //fixed size
+        temp_src = host_nameIPv6(iph->ip6_src);
+        temp_dest = host_nameIPv6(iph->ip6_dst);
+    }
+    else
+    {
+        struct ip *iph = (struct ip *)(buffer + sizeof(struct ether_header));
+        iphdr_len = iph->ip_hl*4;
+        temp_src = host_name(iph->ip_src);
+        temp_dest = host_name(iph->ip_dst);
+    }
+    //TODO: find the ssl connection and add it to the list
+
+    //na toto nezabudni
+//    if (temp_src == NULL|| temp_dest == NULL) {	//malloc error
+//        header.header_size = -1;
+//        return header;
+//    }
+
+    struct tcphdr *tcph = (struct tcphdr*)(buffer + iphdr_len + sizeof(struct ether_header));
+    unsigned tcp = iphdr_len + sizeof(struct ether_header);
+    int tcphdr_len =  sizeof(struct ether_header) + iphdr_len + tcph->th_off*4 ;
+    printf("%d\n", tcphdr_len);
+    strcpy(header.src_addr, temp_src);
+    strcpy(header.dest_addr, temp_dest);
+    free(temp_src);
+    free(temp_dest);
+    header.src_port = ntohs(tcph->th_sport);
+    header.dest_port = ntohs(tcph->th_dport);
+    header.start_time = time;
+    header.start_microsec = microsec;
+//
+    //https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
+    if ((((buffer[((buffer[tcphdr_len] & 0xf0) >> 2)] == 0x14) ||
+    (buffer[tcphdr_len] == 0x15) ||
+    (buffer[tcphdr_len] == 0x17)) &&
+    (buffer[tcphdr_len+1] == 0x03 && (buffer[tcphdr_len+2] < 0x04)))   ||
+    ((buffer[tcphdr_len] == 0x16) &&
+    (buffer[tcphdr_len+1] == 0x03) && (buffer[tcphdr_len+2] < 0x04) && (buffer[tcphdr_len+9] == 0x03) &&
+    (buffer[tcphdr_len+10] < 0x04))    ||
+    (((buffer[tcphdr_len] < 0x14) ||
+    (buffer[tcphdr_len] > 0x18) ||
+    (((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1]) > 9 )) &&
+    (buffer[tcphdr_len+3] == 0x00) &&
+    (buffer[tcphdr_len+4] == 0x02)))
+    {
+
+        printf(" %02x ", buffer[tcphdr_len +3] & 0xff);
+        printf(" %02x\n", buffer[tcphdr_len +4] & 0xff);
+//        //https://stackoverflow.com/questions/3897883/how-to-detect-an-incoming-ssl-https-handshake-ssl-wire-format
+        if (buffer[tcphdr_len] == 0x16 && buffer[tcphdr_len+5] == 0x01 ) { //Handshake type Client-Hello SSLv3<
+            printf("som tu aspon raz?");
+            //TODO: GET SNI, PAYLOAD SIZE
+            header.packets = 1;
+            uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + 3]);
+            header.size = ntohs(length); //test it pls
+//            printf("velkost headeru %d\n", header.size);
+            strcpy(header.sni, "TODO");
+            DLInsertLast(&connection_list, header, ntohs(tcph->th_sport));
+            printf("test portu v liste: %d", connection_list.Last->port);
+        }
+        else if ((buffer[tcphdr_len+3] == 0x00) && (buffer[tcphdr_len+4] == 0x02) &&
+         buffer[tcphdr_len+2] == 0x01) { //handshake Client-Hello SSLv2
+            header.packets = 1;
+            header.size = ntohs(buffer[((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1])]); //test it pls
+            strcpy(header.sni, "TODO_SSLv2");
+            DLInsertLast(&connection_list, header, ntohs(tcph->th_sport));
+        } else {
+    	    DLFirst(&connection_list);
+//    	    printf("test portu %d\n", ntohs(tcph->th_sport));
+    	    for (;;){
+                if (connection_list.Act->port == ntohs(tcph->th_sport) || connection_list.Act->port == ntohs(tcph->th_dport)) {
+                    connection_list.Act->data.packets += 1;
+                    connection_list.Act->data.size +=1000; // add bytes to all data transfered //placeholder for now
+                    break;
+                }
+                if (!connection_list.Act->rptr) break;
+                DLSucc(&connection_list);
+    	    }
+    	}
+    }
+
+    //TODO: when TCP FIN . print data and remove connection from list
+
+    // strcpy(header.src_addr, temp_src);
+    // strcpy(header.dest_addr, temp_dest);
+    // free(temp_src);
+    // free(temp_dest);
+    // header.src_port = ntohs(tcph->th_sport);
+    // header.dest_port = ntohs(tcph->th_dport);
+    // header.header_size = tcphdr_len;
+    // return header;
+}
+
+
+
+/*
+*	Gets the whole packet, calls functions for packet parsing
+* 	depending of protocol type
+*	MODIFICATED function from:
+* 	SOURCE: https://gist.github.com/fffaraz/7f9971463558e9ea9545
+*	AUTHOR: Faraz Fallahi 
+*/
+void callback(u_char *args, const struct pcap_pkthdr* pkthdr,const u_char* buffer)
+{
+	signal(SIGINT, intHandler); 		//to properly catch CTRL+C
+	struct ether_header *p = (struct ether_header *) buffer;
+	bool ipv6 = false;
+	int tcp_switch = 0;
+	if (ntohs(p->ether_type) == ETHERTYPE_IPV6) {     // if ETHERTYPE is IPV6, flag is set to true
+        ipv6 = true;
+    }
+	args = NULL; // for not having a warning of unused variable
+//	struct pckt_info packet_info;	// to save values for printing the data
+    const unsigned int data_len = (pkthdr->len);
+    const u_char *data = (buffer);
+	char time[50];
+	strftime(time,sizeof(time),"%Y-%m-%d %H:%M:%S", localtime(&pkthdr->ts.tv_sec));
+
+	//Get the IP Header part of this packet , excluding the ethernet header
+	if (ipv6 == true)
+	{
+		struct ip6_hdr *iph = (struct ip6_hdr *)(buffer + sizeof(struct ether_header));
+		tcp_switch = iph->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+	}
+	else
+	{
+		struct ip *iph = (struct ip*)(buffer + sizeof(struct ether_header));
+		tcp_switch = iph->ip_p;
+	}
+	switch (tcp_switch) //Check the Protocol and do accordingly...
+	{
+		case 6:  //TCP Protocol
+			tcp_packet(pkthdr->ts.tv_sec, pkthdr->ts.tv_usec, buffer, ipv6);
+			break;
+	}
+//	if (packet_info.header_size == -1){ // internal error
+//		exit(20);		 	 			//something went wrong (malloc, etc)
+//	}
+//	print_data(time, pkthdr->ts.tv_usec, packet_info, data_len, data);
+}
+
+
+pcap_t *set_up(int mode,char *iface,char *rfile)
+{
+	struct bpf_program fp;        // to hold compiled program
+    char errbuf[PCAP_ERRBUF_SIZE]; 		//PCAP macro
+	bpf_u_int32 pMask;            // subnet mask 
+	bpf_u_int32 pNet;             // ip address
+    pcap_t *sniff;
+
+    // fetch the network address and network mask
+	if (pcap_lookupnet(iface, &pNet, &pMask, errbuf) == -1)
+	{
+		fprintf(stderr, "%s\n", errbuf);
+		return NULL;
+	}
+
+	// Opens device for sniffing
+	if (mode == 0){     //help printed
+	    return NULL;
+	}
+	if (mode == 10) 
+		sniff = pcap_open_offline(rfile, errbuf); //https://www.tcpdump.org/manpages/pcap_loop.3pcap.html
+	else 
+		sniff = pcap_open_live(iface, BUFSIZ, 0, 1000, errbuf);
+
+	if(sniff == NULL)
+	{
+		fprintf(stderr, "pcap_open failed due to [%s]\n", errbuf);
+		return NULL;
+	}
+
+	//source: https://www.tcpdump.org/manpages/pcap_compile.3pcap.html
+	if(pcap_compile(sniff, &fp, "tcp ", 0, pNet) == -1)	
+	{
+		fprintf(stderr, "pcap_compile() failed\n");
+		return NULL;
+	}
+
+	if(pcap_setfilter(sniff, &fp) == -1)
+	{
+		fprintf(stderr, "pcap_setfilter() failed\n");
+		return NULL;
+	}
+	return sniff;
+}
 
 int main(int argc, char *argv[])
 {
+    DLInitList(&connection_list);
 	char *iface = malloc(21 * sizeof(char));	//interface
 	char *rfile = malloc(201 * sizeof(char));		//pcapng file
 	if (iface == NULL) { return 1; }
 	if (rfile == NULL) { return 1; }
-
+    //TODO check file validity to be more robust
 	int args = args_parse(argc, argv, iface, rfile);
 	if (args == 1 || args == 0) {
 		free(iface);
@@ -142,7 +947,11 @@ int main(int argc, char *argv[])
 	}
 
 	// printf("interface=%s, pcapng file=%s\n", iface, rfile);
-
+	pcap_t *sniff = set_up(args, iface, rfile);
+	if (sniff) {
+        // Loop for catching packets, ends after pnum packets were catched
+        pcap_loop(sniff, -1 , callback, NULL);
+	}
 
 	if (args != 10) {
 		free(iface);
