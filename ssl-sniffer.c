@@ -1,246 +1,31 @@
 /*******************************************
-	NAME:			
-	DESCRIPTION:	
+	NAME:			SSL connection monitor
+	DESCRIPTION:	Catch SSLv2 to TLSv1.2 connection and outputs info about it
 	AUTHOR:			Dominik Boboš (xbobos00)
 	AC.YEAR:		2020/2021
 ********************************************/
 
 
+#include "ssl-sniffer.h"
 #include <stdio.h>				//////////////////////////
 #include <signal.h>				//						//
 #include <stdlib.h> 			//						//
-#include <stdbool.h>			//						//
-//#include <ctype.h>				//	C-dependencies		//
+#include <stdbool.h>			//	C-dependencies		//
 #include <string.h>				//						//
 #include <getopt.h>				//						//
 #include <time.h>				//						//
 #include <sys/types.h>			//////////////////////////
 #include <netdb.h>				//////////////////////////
 #include <arpa/inet.h>			//						//
-#include <pcap.h>				//						// sudo apt-get install libpcap0.8-dev
+#include <pcap.h>				//						//
 #include <netinet/ip.h>			// Libs for sniffing 	//
 #include <netinet/tcp.h>		//						//
 #include <netinet/if_ether.h>	//						//
 #include <netinet/ip6.h> 		//////////////////////////
+//sudo apt-get install libpcap0.8-dev
 
-
-/*
-*	Struct with needed info
-* 	for output
-*/
-typedef struct pckt_info
-{
-    char src_addr[1025];	//contains source IP
-    char dest_addr[1025];	//contains destination IP
-    unsigned src_port;		//contains source  PORT
-    unsigned dest_port;		//contains destination  PORT
-    char sni[1025];         // SNI
-    long start_time;         //
-    long start_microsec;
-    long end_time;         //
-    long end_microsec;
-    int packets;             // packets count in connection
-    int size;                // data in Bytes transfered in connection
-    int ssl_ver;            // 0 for SSLv2 1 for SSLv3,TLSv1.0,1.1,1.2
-
-} pckt_info;
-
-typedef struct tDLElem {                 /* prvek dvousměrně vázaného seznamu */
-    int port;
-    struct pckt_info data;                                            /* užitečná data */
-    struct tDLElem *lptr;          /* ukazatel na předchozí prvek seznamu */
-    struct tDLElem *rptr;        /* ukazatel na následující prvek seznamu */
-} *tDLElemPtr;
-
-typedef struct {                                  /* dvousměrně vázaný seznam */
-    tDLElemPtr First;                      /* ukazatel na první prvek seznamu */
-    tDLElemPtr Act;                     /* ukazatel na aktuální prvek seznamu */
-    tDLElemPtr Last;                    /* ukazatel na posledni prvek seznamu */
-} tDLList;
-
-
-void DLInitList (tDLList *L) {
-/*
-** Provede inicializaci seznamu L před jeho prvním použitím (tzn. žádná
-** z následujících funkcí nebude volána nad neinicializovaným seznamem).
-** Tato inicializace se nikdy nebude provádět nad již inicializovaným
-** seznamem, a proto tuto možnost neošetřujte. Vždy předpokládejte,
-** že neinicializované proměnné mají nedefinovanou hodnotu.
-**/
-
-///tym ze inicializujem, vsetko nastavim na NULL lebo este nic ine nemam
-    L->Act = NULL;
-    L->Last = NULL;
-    L->First = NULL;
-}
-
-void DLDisposeList (tDLList *L) {
-/*
-** Zruší všechny prvky seznamu L a uvede seznam do stavu, v jakém
-** se nacházel po inicializaci. Rušené prvky seznamu budou korektně
-** uvolněny voláním operace free.
-**/
-
-///pripad kedy je list prazdny
-    if(L->First == NULL && L->Act == NULL && L->Last == NULL)
-    {
-        return;
-    }
-
-    struct tDLElem *elem_ptr = L->First;
-
-    while(elem_ptr->rptr != NULL)
-    {
-        elem_ptr = elem_ptr->rptr;	///postupne prechadzam po zozname
-        free(elem_ptr->lptr);
-    }
-    free(elem_ptr);		///uvolnenie posledneho lebo cyklus skoncil na poslednom
-
-    DLInitList(L);
-}
-
-void DLInsertLast(tDLList *L, pckt_info val, int port) {
-/*
-** Vloží nový prvek na konec seznamu L (symetrická operace k DLInsertFirst).
-** V případě, že není dostatek paměti pro nový prvek při operaci malloc,
-** volá funkci DLError().
-**/
-
-    struct tDLElem *new_elem = (struct tDLElem *) malloc(sizeof(struct tDLElem));
-    if(new_elem == NULL)	///kontrola uspesnosti malloc
-    {
-        return;
-    }
-    new_elem->port = port;
-    new_elem->data = val;
-    new_elem->rptr = NULL; 				///novy vlozeny elem napravo ukazuje na NULL
-    new_elem->lptr = L->Last; 			/// novy vlozeny elem nalavo ukazuje na predtym posledny
-
-    if (L->Last != NULL) { 				/// tam uz bol posledny
-        L->Last->rptr = new_elem; 			///Stary posledny uz nebude ukazovat napravo na NULL ale na novy prvy
-
-    }
-    else{ 								/// insert do prázdného listu
-        L->First = new_elem;
-    }
-
-    L->Last = new_elem;				/// nastavenie ukazatela noveho prvku na koniec
-}
-
-void DLFirst (tDLList *L) {
-/*
-** Nastaví aktivitu na první prvek seznamu L.
-** Funkci implementujte jako jediný příkaz (nepočítáme-li return),
-** aniž byste testovali, zda je seznam L prázdný.
-**/
-
-    L->Act = L->First;
-}
-
-void DLDeleteFirst (tDLList *L) {
-/*
-** Zruší první prvek seznamu L. Pokud byl první prvek aktivní, aktivita
-** se ztrácí. Pokud byl seznam L prázdný, nic se neděje.
-**/
-    if (L->First == NULL)
-        return;
-
-    struct tDLElem *elem_ptr = L->First;
-
-    if(L->First == L->Last)
-    {
-        DLInitList(L);			///ak je v liste jediny prvok tak zanikne a inicialzujeme znova
-    }
-    else if (L->First == L->Act)
-    {
-        L->Act = NULL;
-        L->First = L->First->rptr;
-        L->First->lptr = NULL;
-    }
-    else
-    {
-        L->First = L->First->rptr;
-        L->First->lptr = NULL;
-    }
-
-    free(elem_ptr);
-}
-
-void DLPostDelete (tDLList *L) {
-/*
-** Zruší prvek seznamu L za aktivním prvkem.
-** Pokud je seznam L neaktivní nebo pokud je aktivní prvek
-** posledním prvkem seznamu, nic se neděje.
-**/
-    if(L->First == NULL && L->Act == NULL && L->Last == NULL) ///ked je prazdny list
-    {
-        return;
-    }
-
-    if((L->Act == L->Last ) || (L->Act == NULL))
-        return;
-    else
-    {
-        struct tDLElem *elem_ptr = L->Act->rptr;		///nastavim na prvok ktory chcem mazat
-        if (elem_ptr == L->Last)						///pripad kedy je mazany prvok aj poslednym
-        {
-            L->Act->rptr = NULL;
-            L->Last = L->Act;
-        }
-        else
-        {
-            struct tDLElem *elem_ptr_next = elem_ptr->rptr;	///nastavim na prvok napravo od mazaneho
-            L->Act->rptr = elem_ptr_next;			///aktivny ukazuje na prvok napravo za mazanym
-            elem_ptr_next->lptr = L->Act;			///nalavo od mazaneho prvku ukazuje na aktivny
-        }
-        free(elem_ptr);
-    }
-}
-
-void DLSucc (tDLList *L) {
-/*
-** Posune aktivitu na následující prvek seznamu L.
-** Není-li seznam aktivní, nedělá nic.
-** Všimněte si, že při aktivitě na posledním prvku se seznam stane neaktivním.
-**/
-    if (L->Act == NULL)
-        return;
-    else
-    {
-        if(L->Last == L->Act)
-            L->Act = NULL;
-        else
-        {
-            L->Act = L->Act->rptr;
-        }
-    }
-}
-
-
-void DLPred (tDLList *L) {
-/*
-** Posune aktivitu na předchozí prvek seznamu L.
-** Není-li seznam aktivní, nedělá nic.
-** Všimněte si, že při aktivitě na prvním prvku se seznam stane neaktivním.
-**/
-
-    if (L->Act == NULL)
-        return;
-    else
-    {
-        if(L->First == L->Act)
-            L->Act = NULL;
-        else
-        {
-            L->Act = L->Act->lptr;
-        }
-    }
-}
 
 tDLList connection_list; //list to track SSL/TLS connections
-
-
-
 
 int show_interfaces()
 {
@@ -254,7 +39,7 @@ int show_interfaces()
 		return -5;
 	}
 	// Print the list to user
-	//  MODIFICATED from
+	// MODIFICATED from:
 	// source: https://www.thegeekstuff.com/2012/10/packet-sniffing-using-libpcap/
 	// author: HIMANSHU ARORA
 	// date: 25th OCTOBER, 2012
@@ -271,14 +56,19 @@ int show_interfaces()
 }
 
 /*
-*	Function to properly catch keyboard interruptions
+ *	Function to properly catch keyboard interruptions
 */
 void intHandler()
 {
     DLDisposeList(&connection_list);
+    printf("Keyboard interrupt detected. Terminating the SSL Monitor.\n");
     exit(0);
 }
 
+
+/*
+ * Prints help to standard output
+ */
 void print_help()
 {
 	puts("HELP:");
@@ -287,7 +77,15 @@ void print_help()
 }
 
 
-
+/*
+ * Function for parsing command line arguments.
+ * Takes int argc and char **argv, and char * to interface and pcapng file
+ * returns 0 when printing help
+ * returns 10 when -r was used
+ * returns 20 when -i was used
+ * returns 30 when both -i and -r were used
+ * returns 1 on error
+ */
 int args_parse(int argc, char *argv[], char *iface, char *rfile)
 {
 	bool iface_bool = false;
@@ -343,40 +141,42 @@ int args_parse(int argc, char *argv[], char *iface, char *rfile)
 	return 30;					// both -r and -i was entered
 }
 
-// /*
-// *	Function for right output format
-// *	prints spaces 'count' times
-// */
-// void add_space(int count)
-// {
-//     if (count <= 22)	//because of the extra space between 8 bytes
-//         --count;
-//     char spaces[count];
-//     for (int i = 0; i < count; i++)
-//         spaces[i] = ' ';
-//     spaces[count] = '\0';
-//     printf("%s",spaces);
-// }
 
-void print_data(char *time, long microsec, pckt_info packet_info,
-                 const unsigned data_len, const u_char *data)
+/*
+ * Prints the whole SSL connection to STDOUT
+ * Takes uint16_t src_port - source port, dst_port - destination port
+ * the info about the connection is in the tDLList connection_list;
+ */
+void print_data(uint16_t src_port, uint16_t dst_port)
 {
-	if (packet_info.src_port == 443) {
-		printf("%s.%ld,%s,%u,%s\n\n", time, microsec,
-	    packet_info.dest_addr, packet_info.dest_port,
-	    packet_info.src_addr);
-	}
-	else {
-		printf("%s.%ld,%s,%u,%s\n\n", time, microsec,
-	    packet_info.src_addr, packet_info.src_port,
-	    packet_info.dest_addr);
-	}
+    for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)){
+        if (connection_list.Act->port == ntohs(src_port) || connection_list.Act->port == ntohs(dst_port)) {
+            long duration_sec = connection_list.Act->data.end_time - connection_list.Act->data.start_time;
+            long duration_usec = connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
+            if (duration_usec < 0) {
+                duration_usec = 1000000 + connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
+                duration_sec -= 1; //i use the second for micro seconds
+            }
+            char datetime[50];
+            strftime(datetime,sizeof(datetime),"%Y-%m-%d %H:%M:%S", localtime(&connection_list.Act->data.start_time));
+            printf("%s.%06ld,%s,%u,%s,%s,%d,%d,%ld.%06ld\n\n", datetime, connection_list.Act->data.start_microsec,
+                   connection_list.Act->data.src_addr,connection_list.Act->data.src_port,connection_list.Act->data.dest_addr,
+                   connection_list.Act->data.sni,connection_list.Act->data.size ,connection_list.Act->data.packets, duration_sec, duration_usec);
+            if (connection_list.First == connection_list.Act) {
+                DLDeleteFirst(&connection_list);
+            } else {
+                DLPred(&connection_list);
+                DLPostDelete(&connection_list);
+            }
+            break;
+        }
+    }
 }
 
 
 
 /*
-*	returns IPv4 address in a readable form
+ * returns IPv4 address in a readable form
 */
 char *readIPv4(struct in_addr ip_addr)
 {
@@ -394,7 +194,7 @@ char *readIPv4(struct in_addr ip_addr)
 
 
 /*
-returns IPv6 address in a readable form
+ * returns IPv6 address in a readable form
 */
 char *readIPv6(struct in6_addr ip_addr)
 {
@@ -409,6 +209,9 @@ char *readIPv6(struct in6_addr ip_addr)
     return ip;
 }
 
+/*
+ * Gets SNI from SSL packet of type Client-Hello
+ */
 char *get_TLS_SNI(unsigned char *buffer, int tcphdr_len)
 {
     int x =  *(int_least8_t *)(&buffer[tcphdr_len + 43]);   //session ID length
@@ -437,6 +240,7 @@ char *get_TLS_SNI(unsigned char *buffer, int tcphdr_len)
     return SNI;
 }
 
+
 // returns the real length of payload if there is more TLS packets sticked together
 // if no occurences it returns 0
 int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, bool finding_TLS) {
@@ -455,14 +259,70 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, bo
     return payload_size;
 }
 
+void ssl_connection (const u_char *buffer, unsigned data_len, int tcphdr_len, uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_addr, long time, long microsec)
+{
+    pckt_info header;
+    strcpy(header.src_addr, src_addr);
+    strcpy(header.dest_addr, dst_addr);
+    free(src_addr);
+    free(dst_addr);
+    header.src_port = ntohs(src_port);
+    header.start_time = time;
+    header.start_microsec = microsec;
+    header.end_time = time;
+    header.end_microsec = microsec;
 
+//        //https://stackoverflow.com/questions/3897883/how-to-detect-an-incoming-ssl-https-handshake-ssl-wire-format
+    if (buffer[tcphdr_len] == 0x16 && buffer[tcphdr_len + 5] == 0x01 &&
+        ntohs(src_port) != 443) { //Handshake type Client-Hello SSLv3 and higher
+        char *temp_SNI = get_TLS_SNI(buffer, tcphdr_len);
+        if (!temp_SNI) {    //not found server name extension
+            strcpy(header.sni, "(Could not find SNI)");
+        } else {
+            strcpy(header.sni, temp_SNI);
+            free(temp_SNI);
+        }
+        header.ssl_ver = 1;
+        header.packets = 1;
+        header.size = ntohs(*(uint32_t *) (&buffer[tcphdr_len + 3]));
+        header.size += loop_packet(buffer, tcphdr_len, data_len, false);
+        DLInsertLast(&connection_list, header, ntohs(src_port));
+
+    } else if ((buffer[tcphdr_len + 3] == 0x00) && (buffer[tcphdr_len + 4] == 0x02) &&    //SSLv2
+               buffer[tcphdr_len + 2] == 0x01) { //handshake Client-Hello SSLv2
+        header.ssl_ver = 0;
+        header.packets = 1;
+        header.size = ((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1]); //ntohs(buffer[]); //test it pls
+        strcpy(header.sni, "(SSLv2 no SNI provided)");
+        DLInsertLast(&connection_list, header, ntohs(src_port));
+    } else {
+
+        for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)) {
+            if (connection_list.Act->port == ntohs(src_port) ||
+                connection_list.Act->port == ntohs(dst_port)) {
+                connection_list.Act->data.end_time = time;
+                connection_list.Act->data.end_microsec = microsec;
+                connection_list.Act->data.packets += 1;
+                if (connection_list.Act->data.ssl_ver == 1) {
+                    uint32_t length = *(uint32_t *) (&buffer[tcphdr_len + 3]);
+                    connection_list.Act->data.size += ntohs(length); // add bytes to all data transfered
+                    connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len, false);
+                } else {
+                    connection_list.Act->data.size += ((buffer[tcphdr_len] & 0x7f) << 8 |
+                                                       buffer[tcphdr_len + 1]);  //SSLv2
+                }
+                break;
+            }
+        }
+    }
+}
 
 /*
-*	Function for processing TCP protocol
-*	gets buffer and function gets from it
+*	Function for processing TCP packet
+*	gets buffer and function gets
 *	source and destination port and
 *	source and destination ip's from IP header
-*	returns struct pckt_info
+*   returns 0 on success and -10 when malloc failed
 * 	It is modification from
 * 	SOURCE: https://gist.github.com/fffaraz/7f9971463558e9ea9545
 *	AUTHOR: Faraz Fallahi
@@ -495,19 +355,13 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     struct tcphdr *tcph = (struct tcphdr*)(buffer + iphdr_len + sizeof(struct ether_header));
     unsigned tcp = iphdr_len + sizeof(struct ether_header);
     int tcphdr_len =  sizeof(struct ether_header) + iphdr_len + tcph->th_off*4 ;
-    strcpy(header.src_addr, temp_src);
-    strcpy(header.dest_addr, temp_dest);
-    free(temp_src);
-    free(temp_dest);
-    header.src_port = ntohs(tcph->th_sport);
-    header.dest_port = ntohs(tcph->th_dport);
-    header.start_time = time;
-    header.start_microsec = microsec;
 
 
-//    printf(" %02x ", buffer[tcphdr_len ] & 0xff);
-//    printf(" %02x\n", buffer[tcphdr_len +1] & 0xff);
-    //https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
+
+    // Condition to find SSL packet in tcp payload
+    // MODIFICATED function from:
+    // SOURCE: https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
+    // AUTHOR: jschauma
     if ((((buffer[tcphdr_len] == 0x14) ||
     (buffer[tcphdr_len] == 0x15) ||
     (buffer[tcphdr_len] == 0x17)) &&
@@ -516,93 +370,27 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     (buffer[tcphdr_len+1] == 0x03) && (buffer[tcphdr_len+2] < 0x04) &&
     (buffer[tcphdr_len+9] == 0x03) && (buffer[tcphdr_len+10] < 0x04))    ||
     (((buffer[tcphdr_len] < 0x14) ||
-    (buffer[tcphdr_len] > 0x18) ||
-    (((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1]) > 9 )) &&
+    ((buffer[tcphdr_len] > 0x18) &&
+    (buffer[tcphdr_len + 1] > 0x09))) &&
     (buffer[tcphdr_len+3] == 0x00) &&
     (buffer[tcphdr_len+4] == 0x02)))
     {
-
-
-//        //https://stackoverflow.com/questions/3897883/how-to-detect-an-incoming-ssl-https-handshake-ssl-wire-format
-        if (buffer[tcphdr_len] == 0x16 && buffer[tcphdr_len+5] == 0x01 && ntohs(tcph->th_sport) != 443) { //Handshake type Client-Hello SSLv3 and higher
-            char *temp_SNI = NULL;
-            temp_SNI = get_TLS_SNI(buffer, tcphdr_len);
-            if (!temp_SNI) {	//not found server name extension
-                strcpy(header.sni, "(Could not find SNI)");
-            }
-            else {
-                strcpy(header.sni, temp_SNI);
-                free(temp_SNI);
-            }
-            header.ssl_ver = 1;
-            header.packets = 1;
-            uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + 3]);
-            header.size = ntohs(length); 
-            header.size += loop_packet(buffer, tcphdr_len, data_len, false);
-            DLInsertLast(&connection_list, header, ntohs(tcph->th_sport));
-        }
-        else if ((buffer[tcphdr_len+3] == 0x00) && (buffer[tcphdr_len+4] == 0x02) &&
-         buffer[tcphdr_len+2] == 0x01) { //handshake Client-Hello SSLv2
-            header.ssl_ver = 0;
-            header.packets = 1;
-            header.size = ((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1]); //ntohs(buffer[]); //test it pls
-            strcpy(header.sni, "(SSLv2 no SNI provided)");
-            DLInsertLast(&connection_list, header, ntohs(tcph->th_sport));
-        } 
-        else {
-
-    	    for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)){
-                if (connection_list.Act->port == ntohs(tcph->th_sport) || connection_list.Act->port == ntohs(tcph->th_dport)) {
-                    connection_list.Act->data.end_time = time;
-                    connection_list.Act->data.end_microsec = microsec;
-                    connection_list.Act->data.packets += 1;
-                    if (connection_list.Act->data.ssl_ver == 1) {
-                        uint32_t length = *(uint32_t *) (&buffer[tcphdr_len + 3]);
-                        connection_list.Act->data.size += ntohs(length); // add bytes to all data transfered
-                        connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len, false);
-                    } 
-                    else {
-                        connection_list.Act->data.size += ((buffer[tcphdr_len] & 0x7f) << 8 | buffer[tcphdr_len + 1]);  //SSLv2
-                    }
-                    break;
-                }
-    	    }
-    	}
-        return 0;
+        ssl_connection(buffer, data_len, tcphdr_len, tcph->th_sport, tcph->th_dport, temp_src, temp_dest, time, microsec);
     }
 
-    // TCP connection is closing as well as SSL connection
+    // FIN flag - TCP connection is closing
+    // so SSL connection was closed as well
+    // with the last SSL packet of that connection
     if (tcph->th_flags & TH_FIN ) {
-        for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)){
-            if (connection_list.Act->port == ntohs(tcph->th_sport) || connection_list.Act->port == ntohs(tcph->th_dport)) {
-                long duration_sec = connection_list.Act->data.end_time - connection_list.Act->data.start_time;
-                long duration_usec = connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
-                if (duration_usec < 0) {
-                    duration_usec = 1000000 + connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
-                    duration_sec -= 1; //i use the second for micro seconds
-                }
-                char datetime[50];
-                strftime(datetime,sizeof(datetime),"%Y-%m-%d %H:%M:%S", localtime(&connection_list.Act->data.start_time));
-                printf("%s.%06ld,%s,%u,%s,%s,%d,%d,%ld.%06ld\n\n", datetime, connection_list.Act->data.start_microsec,
-                       connection_list.Act->data.src_addr,connection_list.Act->data.src_port,connection_list.Act->data.dest_addr,
-                       connection_list.Act->data.sni,connection_list.Act->data.size ,connection_list.Act->data.packets, duration_sec, duration_usec);
-                if (connection_list.First == connection_list.Act) {
-                    DLDeleteFirst(&connection_list);
-                } else {
-                    DLPred(&connection_list);
-                    DLPostDelete(&connection_list);
-                }
-                break;
-            }
-        }
+        print_data(tcph->th_sport, tcph->th_dport);
     }
+    return 0;
 }
 
 
 
 /*
 *	Gets the whole packet, calls functions for packet parsing
-* 	depending on protocol type
 *	MODIFICATED function from:
 * 	SOURCE: https://gist.github.com/fffaraz/7f9971463558e9ea9545
 *	AUTHOR: Faraz Fallahi 
@@ -637,10 +425,6 @@ void callback(u_char *args, const struct pcap_pkthdr* pkthdr,const u_char* buffe
 			tcp_packet(pkthdr->ts.tv_sec, pkthdr->ts.tv_usec, buffer, ipv6, data_len);
 			break;
 	}
-//	if (packet_info.header_size == -1){ // internal error
-//		exit(20);		 	 			//something went wrong (malloc, etc)
-//	}
-//	print_data(time, pkthdr->ts.tv_usec, packet_info, data_len, data);
 }
 
 
@@ -655,7 +439,7 @@ pcap_t *set_up(int mode,char *iface,char *rfile)
     // fetch the network address and network mask
     long iface_num;
     char *check;
-    iface_num = strtol(iface, &check, 10);
+    if (iface) { iface_num = strtol(iface, &check, 10); }
     if (iface && check[0] == '\0') {
         pcap_if_t *iface_list;
         if (pcap_findalldevs(&iface_list, errbuf) == -1)
