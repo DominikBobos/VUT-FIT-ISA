@@ -1,12 +1,12 @@
 CC=gcc
 CFLAGS= -std=gnu99 -pedantic -Wall -Wextra -lpcap
-DEPS = ssl-sniffer.h
+DEPS = ssl-monitor.h
 
 %.o: %.c $(DEPS)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
-all: ssl-sniffer.o list.o
-	$(CC) -o ssl-sniffer ssl-sniffer.o list.o -lpcap
+all: ssl-monitor.o list.o
+	$(CC) -o ssl-monitor ssl-monitor.o list.o -lpcap
 
 clean:
-	rm -f ssl-sniffer
+	rm -f ssl-monitor
