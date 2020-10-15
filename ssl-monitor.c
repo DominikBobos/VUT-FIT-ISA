@@ -263,6 +263,7 @@ char *get_TLS_SNI(const u_char *buffer, int tcphdr_len)
 int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, int *last_found, int *first_found) {
     int payload_size = 0;
     tcphdr_len += 3;    //offset used for to not count the payload we have already counted (jumps 3 bytes in buffer)
+    bool first = true;
     for(int i = 0; i < (int)data_len; i++) {
         if (((buffer[tcphdr_len + i] == 0x14) ||    //checks the buffer for another TLS packet in payload
              (buffer[tcphdr_len + i] == 0x15) ||
@@ -271,10 +272,14 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, in
             (buffer[tcphdr_len + 1 + i] == 0x03 && (buffer[tcphdr_len + 2 + i] < 0x04))) {
             uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + i + 3]);
             payload_size += ntohs(length);
-            if (i == 0 && first_found) { *first_found = ntohs(length); }
+            if (first && first_found != NULL) {
+                *first_found = ntohs(length);
+                first = false;
+            }
             *last_found = ntohs(length);
         }
     }
+
     return payload_size;
 }
 
@@ -393,8 +398,7 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     struct tcphdr *tcph = (struct tcphdr*)(buffer + iphdr_len + sizeof(struct ether_header));
     int tcphdr_len =  sizeof(struct ether_header) + iphdr_len + tcph->th_off*4 ;
 
-    int first_found, last_found = 0;
-    int loop_length = 0;
+    int first_found, last_found, loop_length = 0;
     // Condition to find SSL packet in tcp payload
     // MODIFICATED function from:
     // SOURCE: https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
@@ -424,7 +428,7 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
                 connection_list.Act->data.end_microsec = microsec;
                 connection_list.Act->data.packets += 1;
                 connection_list.Act->data.size += loop_length; // add bytes to all data transfered
-//                printf("data %d\n", loop_length);
+//                printf("data %d\n", first_found);
                 if (first_found == connection_list.Act->data.last_found_size) {
                     connection_list.Act->data.size -= first_found; // otherwise we will count that twice
                 }
