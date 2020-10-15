@@ -28,13 +28,14 @@ typedef struct pckt_info
     int packets;            //packets count in connection
     int size;               //data in Bytes transfered in connection
     int ssl_ver;            //0 for SSLv2 1 for SSLv3,TLSv1.0,1.1,1.2
+    int last_found_size;
 
 } pckt_info;
 
 /*
  * Pointer to element of the list
  */ 
-typedef struct tDLElem {            
+typedef struct tDLElem {
         int port;						/* key for finding the right connection */
     	struct pckt_info data;         	/* useful data */
         struct tDLElem *lptr;          	/* ptr to the previous element in the list */

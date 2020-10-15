@@ -154,10 +154,14 @@ int args_parse(int argc, char *argv[], char *iface, char *rfile)
  * Takes uint16_t src_port - source port, dst_port - destination port
  * the info about the connection is in the tDLList connection_list;
  */
-void print_data(uint16_t src_port, uint16_t dst_port)
+void print_data(uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_addr)
 {
-    for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)){
-        if (connection_list.Act->port == ntohs(src_port) || connection_list.Act->port == ntohs(dst_port)) {
+
+    for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)) {
+        if ((connection_list.Act->port == ntohs(src_port) &&
+        (strcmp(connection_list.Act->data.src_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, dst_addr) == 0)) ||
+        (connection_list.Act->port == ntohs(dst_port) &&
+        (strcmp(connection_list.Act->data.src_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, dst_addr) == 0))) {
             long duration_sec = connection_list.Act->data.end_time - connection_list.Act->data.start_time;
             long duration_usec = connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
             if (duration_usec < 0) {
@@ -166,7 +170,7 @@ void print_data(uint16_t src_port, uint16_t dst_port)
             }
             char datetime[50];
             strftime(datetime,sizeof(datetime),"%Y-%m-%d %H:%M:%S", localtime(&connection_list.Act->data.start_time));
-            printf("%s.%06ld,%s,%u,%s,%s,%d,%d,%ld.%06ld\n\n", datetime, connection_list.Act->data.start_microsec,
+            printf("%s.%06ld,%s,%u,%s,%s,%d,%d,%ld.%06ld\n", datetime, connection_list.Act->data.start_microsec,
                    connection_list.Act->data.src_addr,connection_list.Act->data.src_port,connection_list.Act->data.dest_addr,
                    connection_list.Act->data.sni,connection_list.Act->data.size ,connection_list.Act->data.packets, duration_sec, duration_usec);
             if (connection_list.First == connection_list.Act) {
@@ -254,18 +258,20 @@ char *get_TLS_SNI(const u_char *buffer, int tcphdr_len)
  * returns the real length of payload if there is
  * more TLS packets sticked together in one TCP connection
  * returns 0 if there are no more occurences of TLS packets.
- * otherwise it returns the
+ * otherwise it returns the length in the found header
  */
-int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
+int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, int *last_found) {
     int payload_size = 0;
     tcphdr_len += 3;    //offset used for to not count the payload we have already counted (jumps 3 bytes in buffer)
-    for(int i = 0; i < (int)data_len -5; i++) {
+    for(int i = 0; i < (int)data_len; i++) {
         if (((buffer[tcphdr_len + i] == 0x14) ||    //checks the buffer for another TLS packet in payload
              (buffer[tcphdr_len + i] == 0x15) ||
+             (buffer[tcphdr_len + i] == 0x16) ||
              (buffer[tcphdr_len + i] == 0x17)) &&
             (buffer[tcphdr_len + 1 + i] == 0x03 && (buffer[tcphdr_len + 2 + i] < 0x04))) {
             uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + i + 3]);
             payload_size += ntohs(length);
+            *last_found = ntohs(length);
         }
     }
     return payload_size;
@@ -275,16 +281,12 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
  *  Function parses the SSL header and saves the info to the pckt_info header
  *  all the pckt_info variables are saved in connection_list.
  */
-void ssl_connection (const u_char *buffer, unsigned data_len, int tcphdr_len,
+void ssl_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                      uint16_t src_port, uint16_t dst_port,
                      char *src_addr, char *dst_addr,
                      long time, long microsec)
 {
     pckt_info header;
-    strcpy(header.src_addr, src_addr);
-    strcpy(header.dest_addr, dst_addr);
-    free(src_addr);
-    free(dst_addr);
     header.src_port = ntohs(src_port);
     header.start_time = time;
     header.start_microsec = microsec;
@@ -305,31 +307,44 @@ void ssl_connection (const u_char *buffer, unsigned data_len, int tcphdr_len,
             strcpy(header.sni, temp_SNI);
             free(temp_SNI);
         }
+        strcpy(header.src_addr, src_addr);
+        strcpy(header.dest_addr, dst_addr);
         header.ssl_ver = 1;
         header.packets = 1;
+        header.last_found_size = 0;
         header.size = ntohs(*(uint32_t *) (&buffer[tcphdr_len + 3]));
-        header.size += loop_packet(buffer, tcphdr_len, data_len);
+        header.size += loop_packet(buffer, tcphdr_len+6, data_len, &header.last_found_size);
         DLInsertLast(&connection_list, header, ntohs(src_port));
     }
     else if ((buffer[tcphdr_len + 3] == 0x00) && (buffer[tcphdr_len + 4] == 0x02) &&    //SSLv2
                buffer[tcphdr_len + 2] == 0x01) { //Handshake Client-Hello SSLv2
+        strcpy(header.src_addr, src_addr);
+        strcpy(header.dest_addr, dst_addr);
         header.ssl_ver = 0;
         header.packets = 1;
-        header.size = *(int_least8_t *)(&buffer[tcphdr_len + 1]); //ntohs(buffer[]); //test it pls
+        header.size = *(int_least8_t *)(&buffer[tcphdr_len + 1]);
+        header.last_found_size = 0;
         strcpy(header.sni, "(SSLv2 no SNI provided)");
         DLInsertLast(&connection_list, header, ntohs(src_port));
     }
     else {  //adds info to the current connection, such as size, increment packet count, timestamp
         for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)) {
-            if (connection_list.Act->port == ntohs(src_port) ||
-            connection_list.Act->port == ntohs(dst_port)) {
+            if ((connection_list.Act->port == ntohs(src_port) &&
+            (strcmp(connection_list.Act->data.dest_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, src_addr) == 0)) ||
+            (connection_list.Act->port == ntohs(dst_port) &&
+            (strcmp(connection_list.Act->data.dest_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, src_addr) == 0))) {
                 connection_list.Act->data.end_time = time;
                 connection_list.Act->data.end_microsec = microsec;
                 connection_list.Act->data.packets += 1;
                 if (connection_list.Act->data.ssl_ver == 1) {
                     uint32_t length = *(uint32_t *) (&buffer[tcphdr_len + 3]);
                     connection_list.Act->data.size += ntohs(length); // add bytes to all data transfered
-                    connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len);
+                    if (ntohs(length) == connection_list.Act->data.last_found_size) {
+                        connection_list.Act->data.size -= ntohs(length); // otherwise we will count that twice
+                    }
+                    int last_found = 0;
+                    connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len, &last_found);
+                    connection_list.Act->data.last_found_size = last_found;
                 }
                 else {
                     connection_list.Act->data.size +=  *(int_least8_t *)(&buffer[tcphdr_len + 1]);  //SSLv2
@@ -377,31 +392,55 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     struct tcphdr *tcph = (struct tcphdr*)(buffer + iphdr_len + sizeof(struct ether_header));
     int tcphdr_len =  sizeof(struct ether_header) + iphdr_len + tcph->th_off*4 ;
 
+    int last_found = 0;
+    int loop_length = 0;
     // Condition to find SSL packet in tcp payload
     // MODIFICATED function from:
     // SOURCE: https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
     // AUTHOR: jschauma
     if ((((buffer[tcphdr_len] == 0x14) ||                       //SSLv3 - TLS1.2
     (buffer[tcphdr_len] == 0x15) ||
+    (buffer[tcphdr_len] == 0x16) ||
     (buffer[tcphdr_len] == 0x17)) &&
     (buffer[tcphdr_len+1] == 0x03 && (buffer[tcphdr_len+2] < 0x04)))   ||
-    ((buffer[tcphdr_len] == 0x16) &&                            //SSLv3 - TLS1.2 handshake
-    (buffer[tcphdr_len+1] == 0x03) && (buffer[tcphdr_len+2] < 0x04) &&
-    (buffer[tcphdr_len+9] == 0x03) && (buffer[tcphdr_len+10] < 0x04))    ||
     (((buffer[tcphdr_len] < 0x14) ||                            //SSLv2
     ((buffer[tcphdr_len] > 0x18) &&
     (buffer[tcphdr_len + 1] > 0x09))) &&
     (buffer[tcphdr_len+3] == 0x00) &&
     (buffer[tcphdr_len+4] == 0x02))) {
+//        printf("MEF: %02x\n", buffer[tcphdr_len]);
         ssl_connection(buffer, data_len, tcphdr_len, tcph->th_sport, tcph->th_dport, temp_src, temp_dest, time, microsec);
+    }
+    else if (loop_length = loop_packet(buffer, tcphdr_len - 3, data_len, &last_found) != 0) {
+        for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)) {
+            if ((connection_list.Act->port == ntohs(tcph->th_sport) &&
+                 (strcmp(connection_list.Act->data.dest_addr, temp_src) == 0 ||
+                  strcmp(connection_list.Act->data.src_addr, temp_src) == 0)) ||
+                (connection_list.Act->port == ntohs(tcph->th_dport) &&
+                 (strcmp(connection_list.Act->data.dest_addr, temp_src) == 0 ||
+                  strcmp(connection_list.Act->data.src_addr, temp_src) == 0))) {
+                connection_list.Act->data.end_time = time;
+                connection_list.Act->data.end_microsec = microsec;
+                connection_list.Act->data.packets += 1;
+                if (connection_list.Act->data.ssl_ver == 1) {
+                    connection_list.Act->data.size += loop_length; // add bytes to all data transfered
+                    if (loop_length == connection_list.Act->data.last_found_size) {
+                        connection_list.Act->data.size -= loop_length; // otherwise we will count that twice
+                    }
+                    connection_list.Act->data.last_found_size = last_found;
+                }
+            }
+        }
     }
 
     // FIN flag - TCP connection is closing
     // so SSL connection was closed as well
     // with the last SSL packet of that connection
-    if (tcph->th_flags & TH_FIN) {
-        print_data(tcph->th_sport, tcph->th_dport);
+    if (tcph->th_flags & TH_FIN && ntohs(tcph->th_sport) == 443) {
+        print_data(tcph->th_sport, tcph->th_dport, temp_src, temp_dest);
     }
+    free(temp_src);
+    free(temp_dest);
     return 0;
 }
 
