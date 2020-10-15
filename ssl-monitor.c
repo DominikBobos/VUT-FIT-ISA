@@ -260,7 +260,7 @@ char *get_TLS_SNI(const u_char *buffer, int tcphdr_len)
  * returns 0 if there are no more occurences of TLS packets.
  * otherwise it returns the length in the found header
  */
-int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, int *last_found) {
+int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, int *last_found, int *first_found) {
     int payload_size = 0;
     tcphdr_len += 3;    //offset used for to not count the payload we have already counted (jumps 3 bytes in buffer)
     for(int i = 0; i < (int)data_len; i++) {
@@ -271,6 +271,7 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, in
             (buffer[tcphdr_len + 1 + i] == 0x03 && (buffer[tcphdr_len + 2 + i] < 0x04))) {
             uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + i + 3]);
             payload_size += ntohs(length);
+            if (i == 0 && first_found) { *first_found = ntohs(length); }
             *last_found = ntohs(length);
         }
     }
@@ -313,7 +314,7 @@ void ssl_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
         header.packets = 1;
         header.last_found_size = 0;
         header.size = ntohs(*(uint32_t *) (&buffer[tcphdr_len + 3]));
-        header.size += loop_packet(buffer, tcphdr_len+6, data_len, &header.last_found_size);
+        header.size += loop_packet(buffer, tcphdr_len+6, data_len, &header.last_found_size, NULL);
         DLInsertLast(&connection_list, header, ntohs(src_port));
     }
     else if ((buffer[tcphdr_len + 3] == 0x00) && (buffer[tcphdr_len + 4] == 0x02) &&    //SSLv2
@@ -343,7 +344,7 @@ void ssl_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                         connection_list.Act->data.size -= ntohs(length); // otherwise we will count that twice
                     }
                     int last_found = 0;
-                    connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len, &last_found);
+                    connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len, &last_found, NULL);
                     connection_list.Act->data.last_found_size = last_found;
                 }
                 else {
@@ -392,7 +393,7 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     struct tcphdr *tcph = (struct tcphdr*)(buffer + iphdr_len + sizeof(struct ether_header));
     int tcphdr_len =  sizeof(struct ether_header) + iphdr_len + tcph->th_off*4 ;
 
-    int last_found = 0;
+    int first_found, last_found = 0;
     int loop_length = 0;
     // Condition to find SSL packet in tcp payload
     // MODIFICATED function from:
@@ -411,7 +412,7 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
 //        printf("MEF: %02x\n", buffer[tcphdr_len]);
         ssl_connection(buffer, data_len, tcphdr_len, tcph->th_sport, tcph->th_dport, temp_src, temp_dest, time, microsec);
     }
-    else if (loop_length = loop_packet(buffer, tcphdr_len - 3, data_len, &last_found) != 0) {
+    else if ((loop_length = loop_packet(buffer, tcphdr_len - 3, data_len, &last_found, &first_found)) != 0) {
         for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)) {
             if ((connection_list.Act->port == ntohs(tcph->th_sport) &&
                  (strcmp(connection_list.Act->data.dest_addr, temp_src) == 0 ||
@@ -422,13 +423,18 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
                 connection_list.Act->data.end_time = time;
                 connection_list.Act->data.end_microsec = microsec;
                 connection_list.Act->data.packets += 1;
-                if (connection_list.Act->data.ssl_ver == 1) {
-                    connection_list.Act->data.size += loop_length; // add bytes to all data transfered
-                    if (loop_length == connection_list.Act->data.last_found_size) {
-                        connection_list.Act->data.size -= loop_length; // otherwise we will count that twice
-                    }
-                    connection_list.Act->data.last_found_size = last_found;
+                connection_list.Act->data.size += loop_length; // add bytes to all data transfered
+//                printf("data %d\n", loop_length);
+                if (first_found == connection_list.Act->data.last_found_size) {
+                    connection_list.Act->data.size -= first_found; // otherwise we will count that twice
                 }
+                else if (last_found == connection_list.Act->data.last_found_size) {
+                    connection_list.Act->data.size -= last_found; // otherwise we will count that twice
+                }
+                else if (loop_length == connection_list.Act->data.last_found_size) {
+                    connection_list.Act->data.size -= loop_length; // otherwise we will count that twice
+                }
+                connection_list.Act->data.last_found_size = last_found;
             }
         }
     }
