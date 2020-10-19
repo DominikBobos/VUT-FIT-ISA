@@ -26,7 +26,7 @@
 
 
 tDLList connection_list; //list to track SSL/TLS connections
-
+bool second_fin = false;
 /*
  * Show all available devices to listen
  * returns 0 on success
@@ -154,18 +154,21 @@ int args_parse(int argc, char *argv[], char *iface, char *rfile)
  * Takes uint16_t src_port - source port, dst_port - destination port
  * the info about the connection is in the tDLList connection_list;
  */
-void print_data(uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_addr)
+void print_data(uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_addr, long time, long microsec)
 {
-
     for (DLFirst(&connection_list); connection_list.Act != NULL; DLSucc(&connection_list)) {
         if ((connection_list.Act->port == ntohs(src_port) &&
         (strcmp(connection_list.Act->data.src_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, dst_addr) == 0)) ||
         (connection_list.Act->port == ntohs(dst_port) &&
         (strcmp(connection_list.Act->data.src_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, dst_addr) == 0))) {
-            long duration_sec = connection_list.Act->data.end_time - connection_list.Act->data.start_time;
-            long duration_usec = connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
+            if (second_fin == false){
+                second_fin = true;
+                return;
+            }
+            long duration_sec = time - connection_list.Act->data.start_time;
+            long duration_usec = microsec - connection_list.Act->data.start_microsec;
             if (duration_usec < 0) {
-                duration_usec = 1000000 + connection_list.Act->data.end_microsec - connection_list.Act->data.start_microsec;
+                duration_usec = 1000000 + microsec - connection_list.Act->data.start_microsec;
                 duration_sec -= 1; //i use the second for micro seconds
             }
             char datetime[50];
@@ -179,6 +182,7 @@ void print_data(uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_
                 DLPred(&connection_list);
                 DLPostDelete(&connection_list);
             }
+            second_fin = false;
             break;
         }
     }
@@ -264,7 +268,8 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len, in
     int payload_size = 0;
     tcphdr_len += 3;    //offset used for to not count the payload we have already counted (jumps 3 bytes in buffer)
     bool first = true;
-    for(int i = 0; i < (int)data_len; i++) {
+    for(unsigned i = 0; i + 3 < (int)data_len-tcphdr_len; i++) {
+//        printf("%02x ", buffer[tcphdr_len +i]);
         if (((buffer[tcphdr_len + i] == 0x14) ||    //checks the buffer for another TLS packet in payload
              (buffer[tcphdr_len + i] == 0x15) ||
              (buffer[tcphdr_len + i] == 0x16) ||
@@ -345,9 +350,9 @@ void ssl_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                 if (connection_list.Act->data.ssl_ver == 1) {
                     uint32_t length = *(uint32_t *) (&buffer[tcphdr_len + 3]);
                     connection_list.Act->data.size += ntohs(length); // add bytes to all data transfered
-                    if (ntohs(length) == connection_list.Act->data.last_found_size) {
-                        connection_list.Act->data.size -= ntohs(length); // otherwise we will count that twice
-                    }
+//                    if (ntohs(length) == connection_list.Act->data.last_found_size) {
+//                        connection_list.Act->data.size -= ntohs(length); // otherwise we will count that twice
+//                    }
                     int last_found = 0;
                     connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len, &last_found, NULL);
                     connection_list.Act->data.last_found_size = last_found;
@@ -427,17 +432,19 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
                 connection_list.Act->data.end_time = time;
                 connection_list.Act->data.end_microsec = microsec;
                 connection_list.Act->data.packets += 1;
+//                puts("wttffff");
+//                second_fin == true? puts("true") : puts("false") ;
                 connection_list.Act->data.size += loop_length; // add bytes to all data transfered
 //                printf("data %d\n", first_found);
-                if (first_found == connection_list.Act->data.last_found_size) {
-                    connection_list.Act->data.size -= first_found; // otherwise we will count that twice
-                }
-                else if (last_found == connection_list.Act->data.last_found_size) {
-                    connection_list.Act->data.size -= last_found; // otherwise we will count that twice
-                }
-                else if (loop_length == connection_list.Act->data.last_found_size) {
-                    connection_list.Act->data.size -= loop_length; // otherwise we will count that twice
-                }
+//                if (first_found == connection_list.Act->data.last_found_size) {
+//                    connection_list.Act->data.size -= first_found; // otherwise we will count that twice
+//                }
+//                else if (last_found == connection_list.Act->data.last_found_size) {
+//                    connection_list.Act->data.size -= last_found; // otherwise we will count that twice
+//                }
+//                else if (loop_length == connection_list.Act->data.last_found_size) {
+//                    connection_list.Act->data.size -= loop_length; // otherwise we will count that twice
+//                }
                 connection_list.Act->data.last_found_size = last_found;
             }
         }
@@ -446,8 +453,8 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     // FIN flag - TCP connection is closing
     // so SSL connection was closed as well
     // with the last SSL packet of that connection
-    if (tcph->th_flags & TH_FIN && ntohs(tcph->th_sport) == 443) {
-        print_data(tcph->th_sport, tcph->th_dport, temp_src, temp_dest);
+    if (tcph->th_flags & TH_FIN){
+        print_data(tcph->th_sport, tcph->th_dport, temp_src, temp_dest, time, microsec);
     }
     free(temp_src);
     free(temp_dest);
