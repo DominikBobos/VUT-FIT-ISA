@@ -1,6 +1,6 @@
 /* EDITED FOR ISA PROJECT PURPOSES 
  * BY Dominik Boboš (xbobos00)
- * Header file for ssl-sniffer.c 
+ * Header file for ssl-monitor.c 
 
  * ORIGINALLY FROM IAL course:
  * Předmět: Algoritmy (IAL) - FIT VUT v Brně

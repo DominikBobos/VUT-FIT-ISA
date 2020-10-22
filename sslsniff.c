@@ -5,7 +5,7 @@
 	AC.YEAR:		2020/2021
 ********************************************/
 
-#include "ssl-monitor.h"        // My own header file   //
+#include "sslsniff.h"        // My own header file   //
 #include <stdio.h>				//////////////////////////
 #include <signal.h>				//						//
 #include <stdlib.h> 			//						//
@@ -79,9 +79,11 @@ void print_help()
 	puts("USAGE:\n"
       "\t-i [<interface name>|<interface number>] interface, where the SSL monitor captures the connection\n"
       "\t-r <file> pcap/pcapng file to get SSL connection from \n"
-      "\nIf the program does not work. Launch it with sudo.\n"
-      "When both -i and -r are selected, only -i is in use.\n"
-      "Use no arguments to show available devices to listen.");
+      "\nADDITIONAL INFO:\n"
+      "\tIf the program does not work. Launch it with sudo.\n"
+      "\tWhen both -i and -r are selected, only -i is in use.\n"
+      "\tTerminate the program using the keyboard interrupt when listening from interface.\n"
+      "\tUse no arguments to show available devices to listen.");
 }
 
 
