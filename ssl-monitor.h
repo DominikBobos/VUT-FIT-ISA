@@ -11,33 +11,33 @@
 
 #include<stdio.h>
 #include<stdlib.h>
+#include<stdbool.h>
 
 /*
  *	Struct with info about the connection
  */
-typedef struct pckt_info
+typedef struct conn_info
 {
     char src_addr[40];		//contains source IPv4/6 , 40 is the longest it could get 
     char dest_addr[40];		//contains destination IPv4/6  
-    unsigned src_port;		//contains source  PORT
+    unsigned long src_port;		//contains source  PORT
     char sni[1025];         //SNI - server name indication of max size 1024 characters
-    long start_time;        //the timestamp of the first packet in connection (Client-Hello)
+    long start_time;        //the timestamp of the first packet in connection (TCP SYN)
     long start_microsec;    //the same as above but the microseconds
-    long end_time;          //the timestamp of the newest packet in connection
-    long end_microsec;      //the same as above but the microseconds
-    int packets;            //packets count in connection
-    int size;               //data in Bytes transfered in connection
-    int ssl_ver;            //0 for SSLv2 1 for SSLv3,TLSv1.0,1.1,1.2
-    int last_found_size;
+    int packets;            //packets count in connection from TCP SYN to TCP FIN
+    int size;               //SSL data in Bytes transfered in connection
+    bool has_ssl;           // to recognize from basic
+    bool has_syn_ack;
+    bool second_fin;
 
-} pckt_info;
+} conn_info;
 
 /*
  * Pointer to element of the list
  */ 
 typedef struct tDLElem {
         int port;						/* key for finding the right connection */
-    	struct pckt_info data;         	/* useful data */
+    	struct conn_info data;         	/* useful data */
         struct tDLElem *lptr;          	/* ptr to the previous element in the list */
         struct tDLElem *rptr;        	/* ptr to the next element in the list */
 } *tDLElemPtr;
@@ -49,12 +49,9 @@ typedef struct {
 
 void DLInitList (tDLList *);
 void DLDisposeList (tDLList *);
-void DLInsertLast(tDLList *, pckt_info, int);
+void DLInsertLast(tDLList *, conn_info, unsigned long);
 void DLFirst (tDLList *);
 void DLDeleteFirst (tDLList *);
-void DLDeleteLast (tDLList *);
 void DLPostDelete (tDLList *);
-void DLCopy (tDLList *, int *);
-void DLActualize (tDLList *, int);
 void DLSucc (tDLList *);
 void DLPred (tDLList *);

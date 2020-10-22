@@ -53,13 +53,12 @@ void DLDisposeList (tDLList *L) {
     DLInitList(L);
 }
 
-void DLInsertLast(tDLList *L, pckt_info val, int port) {
+void DLInsertLast(tDLList *L, conn_info val, unsigned long port) {
 /*
 ** Vloží nový prvek na konec seznamu L (symetrická operace k DLInsertFirst).
 ** V případě, že není dostatek paměti pro nový prvek při operaci malloc,
 ** volá funkci DLError().
 **/
-
     struct tDLElem *new_elem = (struct tDLElem *) malloc(sizeof(struct tDLElem));
     if(new_elem == NULL)	///kontrola uspesnosti malloc
     {
