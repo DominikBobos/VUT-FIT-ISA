@@ -5,7 +5,7 @@
 	AC.YEAR:		2020/2021
 ********************************************/
 
-#include "sslsniff.h"        // My own header file   //
+#include "sslsniff.h"           // My own header file   //
 #include <stdio.h>				//////////////////////////
 #include <signal.h>				//						//
 #include <stdlib.h> 			//						//
@@ -14,10 +14,9 @@
 #include <getopt.h>				//						//
 #include <time.h>				//						//
 #include <sys/types.h>			//////////////////////////
-#include <netdb.h>				//////////////////////////
-#include <arpa/inet.h>			//						//
+#include <arpa/inet.h>			//////////////////////////
 #include <pcap.h>				//						//
-#include <netinet/ip.h>			// Libs for parsing 	//
+#include <netinet/ip.h>			// Libs for sniffing 	//
 #include <netinet/tcp.h>		//						//
 #include <netinet/if_ether.h>	//						//
 #include <netinet/ip6.h> 		//////////////////////////
@@ -128,7 +127,7 @@ int args_parse(int argc, char *argv[], char *iface, char *rfile)
 			break;
 		case 'r':
 			if (strlen(optarg) > 200) {
-				fprintf(stderr, "Parameter for pcapng file could not be longer than 200 characters!\n");
+				fprintf(stderr, "Parameter for pcapng file could not be longer than 1000 characters!\n");
 				return 1;
 			}
 			strcpy(rfile, optarg);
@@ -284,6 +283,7 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
             (buffer[tcphdr_len + 2 + i] < 0x04) && (buffer[tcphdr_len + 2 + i] > 0x01))) {
             uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + i + 3]);
             payload_size += ntohs(length);
+            i += ntohs(length) + 4; //jump to another header
         }
     }
     return payload_size;
@@ -571,7 +571,7 @@ int main(int argc, char *argv[])
 {
     DLInitList(&connection_list);                   //initialize the list for connections
 	char *iface = malloc(41 * sizeof(char));	//interface
-	char *rfile = malloc(201 * sizeof(char));	//pcapng file
+	char *rfile = malloc(1001 * sizeof(char));	//pcapng file
 	if (iface == NULL) { return 1; }                //malloc error
 	if (rfile == NULL) { return 1; }                //malloc error
     //TODO check file validity to be more robust
@@ -602,5 +602,5 @@ int main(int argc, char *argv[])
 	DLDisposeList(&connection_list);
 	if (iface) { free(iface); }
 	if (rfile) { free(rfile); }
-	return 0;
+	return sniff == NULL ? -10 : 0;
 }
