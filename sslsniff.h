@@ -26,10 +26,10 @@ typedef struct conn_info
     long start_microsec;    //the same as above but the microseconds
     int packets;            //packets count in connection from TCP SYN to TCP FIN
     int size;               //SSL data in Bytes transfered in connection
-    bool has_ssl;           // to recognize from basic
-    bool has_syn_ack;
-    bool second_fin;
-
+    bool has_ssl;           // flag to recognize from basic tcp
+    bool has_syn_ack;       // flag connection established
+    bool second_fin;        // flag finished connection
+    int overflow;
 } conn_info;
 
 /*

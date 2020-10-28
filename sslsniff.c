@@ -162,11 +162,9 @@ void print_data(uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_
         (connection_list.Act->port == ntohs(dst_port) &&
         (strcmp(connection_list.Act->data.src_addr, src_addr) == 0 || strcmp(connection_list.Act->data.src_addr, dst_addr) == 0))) {
             if (connection_list.Act->data.second_fin  == false){
-                connection_list.Act->data.packets +=1;
                 connection_list.Act->data.second_fin = true;
                 return;
             }
-            connection_list.Act->data.packets +=1;
             if (connection_list.Act->data.has_ssl) {    //print only SSL connections
                 long duration_sec = time - connection_list.Act->data.start_time;
                 long duration_usec = microsec - connection_list.Act->data.start_microsec;
@@ -283,6 +281,10 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
             (buffer[tcphdr_len + 2 + i] < 0x04) && (buffer[tcphdr_len + 2 + i] > 0x01))) {
             uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + i + 3]);
             payload_size += ntohs(length);
+            //detect overflow, +4 because i is on first byte of the header
+            if (i + 4 + tcphdr_len + ntohs(length) > (int)data_len) {   
+                connection_list.Act->data.overflow = ntohs(length) - ((int)data_len - i + 4 + tcphdr_len);
+            }
             i += ntohs(length) + 4; //jump to another header
         }
     }
@@ -355,6 +357,7 @@ void tcp_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
         header.has_ssl = false;             // sets flags
         header.has_syn_ack = false;         // sets flags
         header.second_fin = false;          // sets flags
+        header.overflow = 0;                // initialize overflow
         DLInsertLast(&connection_list, header, header.src_port);
     }
     else {
@@ -375,7 +378,9 @@ void tcp_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                 if (connection_list.Act->data.has_syn_ack == false){
                     break;
                 }
-                int loop_length = loop_packet(buffer, tcphdr_len - 3, data_len);
+                int overflow = connection_list.Act->data.overflow;
+                int loop_length = loop_packet(buffer, tcphdr_len - 3 + overflow, data_len);
+                connection_list.Act->data.overflow = 0;
                 if (((buffer[tcphdr_len] == 0x14) ||                       //SSLv3 - TLS1.2
                      (buffer[tcphdr_len] == 0x15) ||
                      (buffer[tcphdr_len] == 0x16) ||
@@ -446,6 +451,7 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     // so SSL connection was closed as well
     // with the last SSL packet of that connection
     else if (tcph->fin) {
+        tcp_connection(buffer, data_len, tcphdr_len, tcph->source, tcph->dest, temp_src, temp_dest, time, microsec, 0);
         print_data(tcph->source, tcph->dest, temp_src, temp_dest, time, microsec);
     }
     // any other tcp packet
