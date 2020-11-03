@@ -232,6 +232,8 @@ char *readIPv6(struct in6_addr ip_addr)
  * Gets SNI from SSL packet of type Client-Hello
  * returns NULL on fail
  * returns char *SNI on success
+ * implemented using Wireshark analyses 
+ * of Client-Hello  
  */
 char *get_TLS_SNI(const u_char *buffer, int tcphdr_len)
 {

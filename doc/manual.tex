@@ -119,126 +119,102 @@ V prípade spoločne zadaných argumentov \textbf{-i} a \textbf{-r} sa berie do 
 	
 	\newpage
 	\section{Implementácia}
+	
 	Program je implementovaný v jazyku \textbf{C} v súbore \texttt{sslsniff.c}.  
 	sslsniff.c je rozdelený do niekoľkých funkcií. Na začiatku sa do premenných načítajú vstupné argumenty uvedené v sekcií \ref{vstupne argumenty} pomocou funkcie \emph{args\_parse(int argc, char *argv[], char *iface, char *rfile)}. 
 Jednotlivé časti sú v komentári kódu ozdrojované a okomentované.
 	
 	\subsection{Zostavenie komunikácie}
+	
 	Implementácia sieťového adaptéru prípajajúceho sa na existujúcu sieť alebo parsovanie pcapng súboru je vo funkcií  \emph{pcap\_t set\_up(int mode, char *iface, char *rfile)} využívajú funkcie knižnice \emph{pcap.h}. Po správnom nakonfigurovaní funkcií pcap\_open\_offline, prípadne pcap\_open\_live, je možné zostaviť filter, ktorý je nastavený na prepúšťanie TCP paketov, nakoľko len tieto pakety sú schopné prenášať SSL pakety \cite{prednaskaZabezpeceni}. Funkciou \emph{pcap\_compile} s parametrami \emph{pcap\_compile(sniff, \&fp, "tcp ", 0, pNet)} skompilujeme náš adaptér a následne ho môžeme aplikovať pomocou \emph{pcap\_setfilter(sniff, \&fp)},v úspešnom prípade funkcia vráti štruktúru typu pcap\_t,  ak zlyhá ukončia program s návratovou chybou \textbf{-10} \cite{Tcpdump}. 
 	
 	Takto zostavanený adaptér teraz môžeme pomocou \emph{pcap\_loop(sniff,  -1, callback, NULL)} uviesť do \uv{nekonečného cyklu}, kedy sa zachytávajú pakety a pri každom zachytenom pakete sa volá funkcia \emph{callback} \cite{Geeksniffer}. V prípade načítavania z pcapng súboru funkcia končí pri poslednom pakete v zachytenej komunikácii inak je ju potrebné ukončiť pomocou ctrl+c.
 	
 	\subsection{Práca a analýza s paketmi} 
-	Funkcia \emph{callback(u\_char *args, const struct pcap\_pkthdr* pkthdr,const u\_char* buffer)} spracováva každý zachytený paket. Pomocou \texttt{struct ether\_header *p} sa zisťuje či daný paket používa \textbf{IPv4}, alebo \textbf{IPv6}, v prípade, že \emph{ntohs(p->ether\_type) == ETHERTYPE\_IPV6} nastaví sa \texttt{bool ipv6 = true;}. Timestamp paketu - teda čas, kedy bol paket zachytený je uložený v \emph{pkthdr->ts.tv\_sec} a mikro sekundy v \emph{pkthdr->ts.tv\_usec}, pomocou funkcie \emph{localtime(...)} sa správne od Unixovej epochy vypočíta čas. Program je možné kedykoľvek ukončíť pomocou \texttt{\textbf{CTRL+C}}. V prípade chyby je program ukončený s návratovou hodnotou \emph{20}.
 	
-	Dôležitá štruktúra v projekte je \texttt{\emph{struct} pckt\_info}:
-	\begin{lstlisting}
-struct pckt_info 
-{					// velkosť bufferu 1025 odpovedá NI_MAXHOST 
-    char src_addr[1025];	// obsahuje zdrojovú IP/FQDN  
-    char dest_addr[1025];	// obsahuje cieľovú IP or FQDN
-    unsigned src_port;		// obsahuje zdrojový  PORT
-    unsigned dest_port;	// obsahuje cieľový  PORT
-    int header_size;		// velkosť hlavičky celého paketu v [B] 
-};
-	\end{lstlisting}
-	Ukladajú sa do nej potrebné dáta, ktoré sa budú neskôr vypisovať na štadardný výstup.
-	Kedže TCP a UDP majú rozdielne hlavičky \cite{prednaskaTransport}, je potrebné z hlavičky IP zistiť akého protokolu sú nositeľom. Podľa hodnoty uloženej z IP do premennej \emph{int tcp\_udp\_switch} je možné zavolať konkrétne funkcie pre jednotlivé protokoly.
-	K zisťovaniu \textbf{FQDN} teda k zisťovaniu presne stanovenému menu domény \cite{WikiFQDN} slúži funkcia:
-	\begin{lstlisting}
-	char *host_name(struct in_addr ip_addr)  // pre IPv4 adresy
-	char *host_nameIPv6(struct in6_addr ip_addr) // pre IPv6 adresy
-	\end{lstlisting}
-	K nájdeniu mena využíva funkciu \texttt{getnameinfo}. Návratová hodnota funkcie *host\_name | *host\_nameIPv6 je v prípade nájdenia FQDN \texttt{\emph{char} *node}, v prípade neúspechu vráti IP adresu v \texttt{\emph{char} *ip}, v prípade chyby vráti funkcia hodnotu \texttt{NULL}. Funkcia vznikla modifikáciou funkcie z \cite{hostname}.
+	Funkcia \emph{callback(u\_char *args, const struct pcap\_pkthdr* pkthdr,const u\_char* buffer)} spracováva každý zachytený paket. Pomocou \texttt{struct ether\_header *p} sa zisťuje či daný paket používa \textbf{IPv4}, alebo \textbf{IPv6}, v prípade, že \emph{ntohs(p->ether\_type) == ETHERTYPE\_IPV6} nastaví sa \texttt{bool ipv6 = true;}. Timestamp paketu - teda čas, kedy bol daný paket zachytený je uložený v \emph{pkthdr->ts.tv\_sec} a mikro sekundy v \emph{pkthdr->ts.tv\_usec}. Program je možné kedykoľvek ukončíť pomocou \texttt{\textbf{CTRL+C}}. 
 	
-	\subsubsection{Spracovanie IP}
-	\label{spracovanie IP}
-	Spracovanie prebieha v UDP aj TCP rovnako.
-	Pomocou štruktúr \texttt{\emph{struct} ip} | \texttt{\emph{struct} ip6\_hdr} je možné zistiť IP adresu zdroja a cieľa. 
+	Dôležitá štruktúra v projekte je \texttt{\emph{struct} conn\_info}:
 	\begin{lstlisting}
-	//pričítame velkosť hlavičky ethernetu
-struct ip6_hdr *iph = (struct ip6_hdr *)(buffer + sizeof(struct ether_header));
-struct ip *iph = (struct ip *)(buffer + sizeof(struct ether_header));	
+typedef struct conn_info
+{
+    char src_addr[40];			//contains source IPv4/6 , 40 is the longest it could get 
+    char dest_addr[40];		//contains destination IPv4/6  
+    unsigned long src_port;		//contains source  PORT
+    char sni[1025];        		//SNI - server name indication of max size 1024 characters
+    long start_time;        		//the timestamp of the first packet in connection (TCP SYN)
+    long start_microsec;    		//the same as above but the microseconds
+    int packets;            		//packets count in connection from TCP SYN to TCP FIN
+    int size;               			//SSL data in Bytes transfered in connection
+    bool has_ssl;           		// flag to recognize from basic tcp
+    bool has_syn_ack;       		// flag connection established
+    bool second_fin;        		// flag finished connection
+    int overflow;				// signalizing when TLS load is bigger than actual TCP payload
+} conn_info;
 	\end{lstlisting}
 	
-Tieto hodnoty sa ďalej posielajú do funkcie \emph{host\_name} prípadne \emph{host\_nameIPv6}, ktorých výstup sa ukladá do \texttt{char *temp\_src;
-    char *temp\_dest;}. Ďalej je možné zo štruktúry struct \texttt{\emph{struct} ip} zistiť veľkosť IPv4 (nakoľko môže byť v rozmedzí od 20 do 60 bajtov, \emph{slide 10}\cite{prednaskaIPv4}). Táto hodnota sa nachádza v \texttt{iph->ip\_hl}*4 (aby sme získali počet bajtov) a ukladá sa do \texttt{\emph{int} iphdr\_len}. Pri IPv6 je veľkosť stálych 40 bajtov (\emph{slide 4}\cite{prednaskaIPv6}).
-    
+Táto štruktúra je elementom v poli \texttt{tDLList connection\_list}, ktorého funkcionalita je implementovaná v súbore \texttt{list.c}. Štruktúra conn\_info uchováva informácie o spojení ako IP adresy zdroja a cieľa, port zdroju, SNI (\emph{server name indication}), počiatočný čas komunikácie, počet paketov v spojení, počet bytov prenesených TLS a príznaky informujúce stav komunikácie.
+
 	\subsubsection{Spracovanie TCP}
-	Funkcia k analýze TCP hlavičky. V premennej \emph{buffer} sa nachádza celý paket, \emph{ipv6} je rovná \texttt{true} v prípade, že paket obsahuje IPv6 protokol. 
-	\begin{lstlisting}
-struct pckt_info tcp_packet(const u_char *buffer, bool ipv6)
-	\end{lstlisting}
-	\label{spracovanieTCP}
-	Spracovanie IP adries prebieha ako je uvedené v sekcií \ref{spracovanieIP} a hodnoty \texttt{temp\_src} a \texttt{temp\_dest} sa ukladajú do \texttt{header.src\_addr} a \texttt{header.dest\_addr}. 
+	Pri zachytenom TCP pakete sa volá funkcia \texttt{int tcp\_packet(long time, long microsec, const u\_char *buffer, bool ipv6, unsigned int data\_len)}. V tejto funkcií sa získavajú informácie o IP adresách (funkcie \emph{readIPv4, readIPv6}), portoch \texttt{tcph->source, tcph->dest} (zo štruktúry \emph{struct tcphdr} \cite{prednaskaIPv4} \cite{prednaskaIPv6}. Pri zlyhaní funkcie malloc vráti hodnotu -10. Kontrolujú sa príznaky \textbf{SYN}, \textbf{ACK} a  \textbf{FIN}, ktoré sú pre nás významné, pretože vieme určiť stav komunikácie. Pri vzniku TCP komunikácie musí prebehnúť TCP handshake, kedy sa najskôr nastavujú príznaky SYN, odpoveď SYN ACK a potom ACK od zdroja a spojenie je nadviazané. Pri ukončení spojenia sa nastavujú príznaky FIN a potvrdenie ukončenia FIN ACK \cite{prednaskaTransport}. Sledovaním týchto príznakov sa mení volanie funkcie \texttt{tcp\_connection(...)}. 
 	
-	Pomocou štruktúry: 
-	\begin{lstlisting}
-struct tcphdr *tcph = (struct tcphdr*)(buffer + iphdr_len + sizeof(struct ether_header));
-	\end{lstlisting}
-Zisťujeme port zdroja a cieľa a ukladá sa do:
-	\begin{lstlisting}
-	header.src_port = ntohs(tcph->th_sport);
-	header.dest_port = ntohs(tcph->th_dport);
-	\end{lstlisting}
-Pomocou \emph{*tcph} vieme zistiť velkosť tcp paketu v bajtoch, vďaka \texttt{tcph->th\_off*4}.
-Keď sčítame celkové tieto veľkosti hlavičiek získame celkovú veľkosť hlavičky paketu, ktorá sa uloží do \emph{header.header\_size}. Funkcia vráti celú premennú \emph{header}. V prípade chyby sa do premennej header.header\_size uloží hodnota -1.
-
-	\subsubsection{Spracovanie UDP}
-	Spracovanie je obdobné s funkciou k analýze TCP hlavičky, jediný rozdiel je v používanej štruktúre. V premennej \emph{buffer} sa nachádza celý paket, \emph{ipv6} je rovná \texttt{true} v prípade, že paket obsahuje IPv6 protokol. 
-	\begin{lstlisting}
-struct pckt_info udp_packet(const u_char *buffer, bool ipv6)
-	\end{lstlisting}
-	Spracovanie IP adries prebieha ako je uvedené v sekcií spracovanie IP \ref{spracovanie IP} a Spracovanie TCP \ref{spracovanieTCP}.
+	Funkcia \emph{void tcp\_connection(const u\_char *buffer, unsigned data\_len, int tcphdr\_len, uint16\_t src\_port, uint16\_t dst\_port, char *src\_addr, char *dst\_addr, long time, long microsec, int tcp\_syn)} slúži k správnemu spracovaniu aktuálneho spojenia prípadne volanie funkcií na spracovanie SSL/TLS paketov. Pri volaní funkcie s hodnotou premennej \emph{int tcp\_syn} 1 (nastavený príznak SYN), sa použije vetva spracovávania nového TCP spojenia, kedy sa vytvára plní premenná \texttt{conn\_info header}, doplnia sa informácie o porte, IP adresách, timestamp, nastavia sa príznaky a počet paketov a následne sa premenná header vloží do listu connection\_list pomocou funkcie \emph{DLInsertLast}. Pokiaľ bola premenná \emph{int tcp\_syn} s hodnotou 2 použije sa vetva else vyhľadá sa pomocou IP adresy a portu dané spojenie v liste connection\_list a pokiaľ sa tam spojenie nachádza nastaví sa príznak \texttt{has\_syn\_ack} na true, čím sme potvrdili, že dané spojenie sa skutočne nadviazalo. Ak bola funkcia volaná s \emph{int tcp\_syn == 0} testuje sa vo vedlajšej vetve či sa v pakete nenachádza hlavička SSLv3 až TLS1.2 paketu. Ak bol zachytený príznak FIN nastavuje sa príznak \emph{second\_fin} na true, vďaka tomu pri druhom zachytenom FIN príznaku daného spojenia je spojenie vypisané na štandardný výstup vo funkcií \texttt{void print\_data(...)}. 
 	
-	Pomocou štruktúry: 
-	\begin{lstlisting}
-struct udphdr *udph = (struct udphdr*)(buffer + iphdr_len + sizeof(struct ether_header));   
-	\end{lstlisting}
-Zisťujeme port zdroja a cieľa a ukladá sa do:
-	\begin{lstlisting}
-	header.src_port = ntohs(udph->uh_sport);
-	header.dest_port = ntohs(udph->uh_dport);
-	\end{lstlisting}
-Keď sčítame celkové veľkosti hlavičiek získame celkovú veľkosť hlavičky paketu, ktorá sa uloží do \emph{header.header\_size}. Funkcia vráti celú premennú \emph{header}. V prípade chyby sa do premennej header.header\_size uloží hodnota -1. Funkcie \emph{callback, udp\_packet, tcp\_packet} sú modifikáciami kódu od Faraz Fallahi \cite{FarazFallahi}.
+	\subsubsection{Spracovanie SSL spojenia}
+	
+	SSL/TLS \emph{(Secure Socket Layer/Transport Layer Security)} je nezávislé zabezpečnie dát nad transportnou vrstvou v TCP paketoch. Každý mechanizmus vyžaduje vytvorenie a distribúciu kľúčov, zabezpečenie a overenie \cite{prednaskaZabezpeceni}. Zastaralé verzie SSL sa už dnes nepoužívajú, preto aj pre potreby projektu je implementovaná podpora pre SSLv3 a vyššie, teda TLS1.0, TLS1.1 a TLS1.2. \\
+	 
+	 Kedže je spojenie šifrované, informácie o pakete môžeme dostať len z SSL/TLS hlavičky. Sú viaceré možnosti ako je možné hlavičku nájsť, jednou je otestovať postupnosť bajtov ihneď na začiatku TCP payloadu \cite{sslheader}. 
+\begin{lstlisting}
+	if (((buffer[tcphdr_len] == 0x14) ||                       //SSLv3 - TLS1.2
+		(buffer[tcphdr_len] == 0x15) ||
+		(buffer[tcphdr_len] == 0x16) ||
+		(buffer[tcphdr_len] == 0x17)) &&
+		(buffer[tcphdr_len + 1] == 0x03 && (buffer[tcphdr_len + 2] < 0x04)))
+\end{lstlisting}	
 
+\begin{itemize}
+	\item \texttt{0x14} - CHANGE\_CIPHER\_SPEC - informuje že je potrebné zmeniť šifru.
+	\item \texttt{0x15} - ALERT - upozornenie o udalostiach, ktoré nastali
+	\item \texttt{0x16} - HANDSHAKE - prebieha SSL/TLS handshake
+	\item \texttt{0x17} - APPLICATION\_DATA - paket nesúci dáta
+\end{itemize}
+
+Premenná tcphdr\_len značí pozíciu v bytes array \texttt{u\_char buffer} kde začína TCP payload. Na tejto pozícií sa musia nachádzať 0x14, 0x15, 0x16, 0x17 bajty, ktoré značia úlohu prenášaného paketu \cite{ssltraffic}. Nasleduje verzia SSL/TLS protokolu, ktorej prvý bajt začína 0x03 a druhý opisuje konkrétnu verziu (SSL3.0 = 0x00, TLS1.0 = 0x01, TLS1.1 = 0x02, TLS1.2 =  0x03). Za týmto bajtom sa ďalej nachádza informácia o dĺžke, ktorú SSL/TLS nesie. Pomocou funkcie \texttt{ntohs} sa táto 2-bajtová veľkosť spracuje do desiatkovej sústavy a pričíta sa do celkovej veľkosti (connection\_list.Act->data.size), ktorú spojenie prenieslo. Avšak nie vždy sa hlavička nachádza hneď na začiatku TCP payload, ale môže sa nachádzať aj inde.
+	V takom prípade je potrebné použiť funkciu \texttt{int loop\_packet (const u\_char *buffer, int tcphdr\_len, unsigned int data\_len)}. Prehľadáva payload TCP paketu a nachádza postupnosť SSL/TLS hlavičky spomenutú vyššie. Ak ju nájde preskočí sa o nájdenú velkosť na miesto, kde by sa mala nachádzať ďalšia hlavička. Ak sa tam nenachádza funkcia vráti doposiaľ nájdenú velkosť, inak vráti 0. Zisťuje sa aj prípadné pretečenie. To znamená, že pokiaľ sa nájde velkosť hlavičky, ktorá prevyšuje dĺžku spracováného TCP paketu, pretekajúca velkosť sa uloži do \emph{connection\_list.Act->data.overflow}. Ak je vrátená z funkcie nenulová hodnota, prípadne bola hlavička priamo nájdená na začiatku TCP payloadu, je volaná funkcia \texttt{void ssl\_connection(...)}. \\
+	
+	Funkcia zabezpečujúca správne spracovanie náležitostí SSL/TLS spojenia.
+\begin{lstlisting}
+	void ssl_connection(const u_char *buffer, unsigned data_len, 
+				int tcphdr_len, int segmented_packet)
+\end{lstlisting}
+	
+	Významná udalosť pre nadviazanie SSL/TLS spojenia je SSL handshake. O prebiehajúcom handshaku nás informuje bajt s hodnotou 0x16. Hanshake je iniciovaný takzvaným \textbf{Client-Hello}, pýta sa v ňom serveru, ktoré z ponúknutých šifier a metód je možné použiť. Informácia o typu handshaku sa nachádza na \texttt{buffer[tcphdr\_len + 5]} pokiaľ je rovný 0x01 jedná sa o Client-Hello a vo funkcií ssl\_connection sa následne daný paket spracováva. Z tohto paketu je možné vyčítať info \textbf{SNI} - server name indication, značí, ktorému hostname sa klient snaží pripojiť v handshaku \cite{wikiSNI}. V Client-Hello sa nachádzajú rôzne informácie v \emph{extensions} v jednom z nich sa nachádza aj informácia o SNI. 
+	
+Funkcia \texttt{char *get\_TLS\_SNI(const u\_char *buffer, int tcphdr\_len)} sa stará o jej získanie. SNI je uložené do premennej connection\_list.Act->data.sni, v prípade, že sa v Client-Hello nenachádza táto informácia (napríklad SSL3 SNI nepoužíva) je uložený do premennej reťazec \uv{(Could not find SNI)}. 
+	Na potvrdenie Hand-Shake je potrebné dostať odpoveď aj od serveru. V \textbf{Server-Hello} sa potvrdí informácia o použitej šifre a metóde. Informáciu o Server-Hello je možné získať vďaka buffer[tcphdr\_len + 5] == 0x02, zároveň sa aj nastaví príznak \emph{has\_ssl = true}. Znamená to, že zabezpečené spojenie je uskutočnené a je možné začať posielať zašifrované dáta \cite{ssltraffic}. 
+	V každom zachytenom pakete v danom spojení je pripočítaný počet paketov a v prípade SSL/TLS paketu je potom pripočítaná aj veľkosť v bajtoch prenesených dát.
+	
 	\subsection{Výpis výstupu}
 	Výstup dát zabezpečuje funkcia,
 	\begin{lstlisting}
-void print_data(char *time, long microsec, struct pckt_info packet_info, 
-				const unsigned data_len, const u_char *data)
+	void print_data(uint16_t src_port, uint16_t dst_port, 
+				char *src_addr, char *dst_addr, 
+				long time, long microsec)
 	\end{lstlisting}
-	ktorá je volaná z funkcie \emph{callback}. Dáta vypisuje na štandardný výstup podobne ako je v zadaní a obdobne s opensource softvérom \emph{Wireshark}. Výpis je uskutočňovaný po riadkoch v cykle \texttt{for}.
+	ktorá je volaná z funkcie \emph{tcp\_packet} pri zachytenom príznaku FIN. Zabezpečuje výpis ukončeného SSL/TLS spojenia. Za ukončené sa pokladá spojenie, ktoré zaznamenalo dvakrát príznak FIN. Dáta vypisuje na štandardný výstup vo forme určenom v zadaní. Je tu počítaná aj dlžka trvania spojenia od prvého TCP SYN paketu až po posledný TCP FIN paket v sekundách s presnosťou na mikro sekundy. Po úspešnom vypísaní sa zmaže štruktúra conn\_info s daným spojením z listu connection\_list. Taktiež sú tu zmazané aj spojenia, ktoré neobsahovali zabezpečenú komunikáciu. 
+	
 \begin{verbatim}
-___________________________________UDP____________________________________
-21:32:08.461717 192.168.0.103 : 54719 > resolver3.opendns.com : 53
-
-0x0010 98 de d0 ad 9e d4 04 0c  ce e1 33 f4 08 00 45 00  ._Q..U.. Ob.u....
-0x0020 00 48 63 00 00 00 ff 11  e8 74 c0 a8 00 67 d0 43  ........ i.A)..Q.
-0x002a de dc d5 bf 00 35 00 34  96 ec                    _]V@.... .m
-
-0x003a 00 00 00 00 00 00 03 31  30 33 01 30 03 31 36 38  ........ ........
-0x004a 03 31 39 32 07 69 6e 2d  61 64 64 72 04 61 72 70  ........ ........
-0x0056 61 00 00 0c 00 01                                 ......
---------------------------------------------------------------------------
+tuto napises styl vypisu a bude to pppopoiucuii
+ %	 pomocou funkcie \emph{localtime(...)} sa správne od Unixovej epochy vypočíta čas. 
+toto tu asi netreba pchat
 \end{verbatim}
-Prvý riadok je orámovanie paketu s informáciou o aký paket sa jedná. Na ďalšom riadku je timestamp paketu s presnosťou na mikro sekundy, nasleduje IP adresa alebo FQDN zdroja, za dvojbodkou je port zdroja, za znakom \texttt{>} sa nachádza IP adresa alebo FQDN cieľa, za dvojbodkou je port cieľa. 
-
-Nasleduje prázdny riadok a následne sa uskutočňuje výpis jednotlivých bajtov paketu v hexadecimálnej sústave. To znamená, že dvojica takýchto čísel sú 2 bajty.
-
-Prvý stĺpec značí počet dovtedy vypísaných bajtov + počet, ktorý sa vypíše na danom riadku v hexadecimálnom formáte a správne číslo sa stará hodnota uložená v \texttt{end\_case}. 
-
-V druhom stĺpci sa nachádza maximálne 16 bajtov, ktoré sa píšu po dvojiciach a pre lepšiu prehladnosť je stĺpec po ôsmich bajtoch obohatený o jednu medzeru naviac. 
-
-V treťom stĺpci je výpis tých istých bajtov, čo v druhom stĺpci avšak sú vypísané tlačiteľnými znakmi ASCII, netlačiteľné sú pomocou funkcie  \emph{isprint} nahradené bodkou. O doplnenie medzier pre správne zarovnanie sa stará funkcia \texttt{\emph{void} add\_space(int count)}.
-
-Hlavička paketu je od zvyšných dát oddelná medzerou. Posledný riadok slúži opäť ako orámovanie a oddelenie od ostatných zachytených paketov.
 
 	\newpage
 	\section{Testovanie}
-	Testovanie prebiehalo na referenčnom stroji \texttt{PDS-VM} so systémom \texttt{Ubuntu 18.1} a taktiež aj na systéme macOS High Sierra 10.13 . Testovanie prebiehalo pomocou súbežne spusteného open source softvéru \texttt{\textbf{Wireshark}} a projektu \texttt{\textbf{sslsniff}}. Následne sa buď spustil internetový prehliadač a porovnal sa rovnaký paket, alebo sa zachytával paket odoslaný programom \texttt{Curl}.\\
+	Testovanie prebiehalo na stroji so systémom \texttt{Ubuntu 20.04} a na serveri Merlin. Testovanie prebiehalo manuálnou kontrolou výstupu z programu \texttt{sslsniff} so zachytenou komunikáciou s open source softvérom \texttt{\textbf{Wireshark}}. Pomocou display filtra tcp.port == PORT\_SPOJENIA bolo možné zobraziť práve kontrolované spojenie a manuálne sa odkontroloval počet paketov spojenia a počet prenesených bajtov SSL paketmi. 
+	%tu das pekne screeeniky
 	
-	Paket odoslamý programom Curl:
 	
 %	\begin{figure}[h]
 %	\scalebox{1.3}{\includegraphics{ip4c.eps}}
