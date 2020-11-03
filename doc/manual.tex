@@ -11,6 +11,7 @@
 \usepackage{graphicx} 
 \usepackage{listings}
 \usepackage{color}
+%\usepackage[outdir=./]{epstopdf}
 
 \definecolor{dkgreen}{rgb}{0,0.6,0}
 \definecolor{gray}{rgb}{0.5,0.5,0.5}
@@ -203,50 +204,28 @@ Funkcia \texttt{char *get\_TLS\_SNI(const u\_char *buffer, int tcphdr\_len)} sa 
 				long time, long microsec)
 	\end{lstlisting}
 	ktorá je volaná z funkcie \emph{tcp\_packet} pri zachytenom príznaku FIN. Zabezpečuje výpis ukončeného SSL/TLS spojenia. Za ukončené sa pokladá spojenie, ktoré zaznamenalo dvakrát príznak FIN. Dáta vypisuje na štandardný výstup vo forme určenom v zadaní. Je tu počítaná aj dlžka trvania spojenia od prvého TCP SYN paketu až po posledný TCP FIN paket v sekundách s presnosťou na mikro sekundy. Po úspešnom vypísaní sa zmaže štruktúra conn\_info s daným spojením z listu connection\_list. Taktiež sú tu zmazané aj spojenia, ktoré neobsahovali zabezpečenú komunikáciu. 
-	
-\begin{verbatim}
-tuto napises styl vypisu a bude to pppopoiucuii
- %	 pomocou funkcie \emph{localtime(...)} sa správne od Unixovej epochy vypočíta čas. 
-toto tu asi netreba pchat
-\end{verbatim}
+
+Výstup programu má nasledovnú štruktúru.\\
+\emph{<timestamp>,<client ip>,<client port>,<server ip>,<SNI>,<bytes>,<packets>,<duration sec>}
+
 
 	\newpage
 	\section{Testovanie}
-	Testovanie prebiehalo na stroji so systémom \texttt{Ubuntu 20.04} a na serveri Merlin. Testovanie prebiehalo manuálnou kontrolou výstupu z programu \texttt{sslsniff} so zachytenou komunikáciou s open source softvérom \texttt{\textbf{Wireshark}}. Pomocou display filtra tcp.port == PORT\_SPOJENIA bolo možné zobraziť práve kontrolované spojenie a manuálne sa odkontroloval počet paketov spojenia a počet prenesených bajtov SSL paketmi. 
-	%tu das pekne screeeniky
+	Testovanie prebiehalo na stroji so systémom \texttt{Ubuntu 20.04} a na serveri Merlin. Testovanie prebiehalo manuálnou kontrolou výstupu z programu \texttt{sslsniff} so zachytenou komunikáciou s open source softvérom \texttt{\textbf{Wireshark}}. Pomocou display filtra tcp.port == PORT\_SPOJENIA bolo možné zobraziť práve kontrolované spojenie a manuálne sa odkontroloval počet paketov spojenia a počet prenesených bajtov SSL paketmi. \\
 	
 	
-%	\begin{figure}[h]
-%	\scalebox{1.3}{\includegraphics{ip4c.eps}}
-%	\centering
-%	\caption{Paket s IPv4 protokolom}
-%	
-%	\scalebox{1.3}{\includegraphics{ip4w.eps}}
-%	\centering
-%	\caption{Paket vygenerovaný programom Curl zachytený vo Wireshark}
-%	
-%	\scalebox{1.2}{\includegraphics{ip4.eps}}
-%	\centering
-%	\caption{Paket vygenerovaný programom Curl zachytený ipk-sniffer}
-%	\end{figure}
-\newpage
-	Paket s IPv6 vygenerovaný programom Curl, bohužiaľ jediný spôsob ako bolo možné otestovať podporu IPv6:
+	\begin{figure}[h]
+	\scalebox{0.25}{\includegraphics{googleMine.eps}}
+	\centering
+	\caption{Pcapng súbor spracovaný pomocou sslsniff}
+	\end{figure}
+	\begin{figure}[h]
+	\scalebox{0.17}{\includegraphics{googleWireshark.eps}}
+	\centering
+	\caption{Pcapng súbor spracovaný pomocou programu Wireshark}
 	
-%	\begin{figure}[h]
-%	\scalebox{1.2}{\includegraphics{ip6c.eps}}
-%	\centering
-%	\caption{Paket s IPv6 protokolom}
-%	
-%	\scalebox{1.3}{\includegraphics{ip6w.eps}}
-%	\centering
-%	\caption{Paket vygenerovaný programom Curl zachytený vo Wireshark}
-%	
-%	\scalebox{1.2}{\includegraphics{ip6.eps}}
-%	\centering
-%	\caption{Paket vygenerovaný programom Curl zachytený ipk-sniffer}
-%	\end{figure}
-	
-	
+	\end{figure}
+
 	\newpage
 	\section{Použité zdroje}
 	
