@@ -18,18 +18,18 @@
  */
 typedef struct conn_info
 {
-    char src_addr[40];		//contains source IPv4/6 , 40 is the longest it could get 
-    char dest_addr[40];		//contains destination IPv4/6  
-    unsigned long src_port;		//contains source  PORT
-    char sni[1025];         //SNI - server name indication of max size 1024 characters
-    long start_time;        //the timestamp of the first packet in connection (TCP SYN)
-    long start_microsec;    //the same as above but the microseconds
-    int packets;            //packets count in connection from TCP SYN to TCP FIN
-    int size;               //SSL data in Bytes transfered in connection
+    char src_addr[40];		// contains source IPv4/6 , 40 is the longest it could get 
+    char dest_addr[40];		// contains destination IPv4/6  
+    unsigned long src_port;	// contains source  PORT
+    char sni[1025];         // SNI - server name indication of max size 1024 characters
+    long start_time;        // the timestamp of the first packet in connection (TCP SYN)
+    long start_microsec;    // the same as above but the microseconds
+    int packets;            // packets count in connection from TCP SYN to TCP FIN
+    int size;               // SSL data in Bytes transfered in connection
     bool has_ssl;           // flag to recognize from basic tcp
     bool has_syn_ack;       // flag connection established
     bool second_fin;        // flag finished connection
-    int overflow;
+    int overflow;           // signalizing when TLS load is bigger than actual TCP payload
 } conn_info;
 
 /*
