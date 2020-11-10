@@ -198,7 +198,7 @@ void print_data(uint16_t src_port, uint16_t dst_port, char *src_addr, char *dst_
 */
 char *readIPv4(struct in_addr ip_addr)
 {
-    char *ip = malloc(NI_MAXHOST * sizeof(char));	//buffer about size of the max host
+    char *ip = malloc(1025 * sizeof(char));	//buffer about size of the max host
     if (!ip)
     {	return NULL;}
     strcpy(ip, inet_ntoa(ip_addr));	//converts to readable address
@@ -216,10 +216,10 @@ char *readIPv4(struct in_addr ip_addr)
 */
 char *readIPv6(struct in6_addr ip_addr)
 {
-    char *ip = malloc(NI_MAXHOST * sizeof(char));	//INET6_ADDRSTRLEN
+    char *ip = malloc(1025 * sizeof(char));	//INET6_ADDRSTRLEN
     if (!ip)
     {	return NULL;}
-    if (inet_ntop(AF_INET6, &ip_addr, ip, NI_MAXHOST) == NULL)	//converts to readable address
+    if (inet_ntop(AF_INET6, &ip_addr, ip, 1025) == NULL)	//converts to readable address
     {
         perror("inet_ntop");
         return NULL;
@@ -272,7 +272,8 @@ char *get_TLS_SNI(const u_char *buffer, int tcphdr_len)
  */
 int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
     int payload_size = 0;
-    tcphdr_len += 3;    //offset used for to not count the payload we have already counted (jumps 3 bytes in buffer)
+    bool found = false;
+    int prev_i = 0;
     for(int i = 0; i + 3 < (int)data_len-tcphdr_len; i++) {
 
         if (((buffer[tcphdr_len + i] == 0x14) ||    //checks the buffer for another TLS packet in payload
@@ -280,7 +281,7 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
              (buffer[tcphdr_len + i] == 0x16) ||
              (buffer[tcphdr_len + i] == 0x17)) &&
             (buffer[tcphdr_len + 1 + i] == 0x03 &&
-            (buffer[tcphdr_len + 2 + i] < 0x04) && (buffer[tcphdr_len + 2 + i] > 0x01))) {
+            (buffer[tcphdr_len + 2 + i] < 0x04))) {
             uint32_t length = *(uint32_t *)(&buffer[tcphdr_len + i + 3]);
             payload_size += ntohs(length);
             //detect overflow, +4 because i is on first byte of the header
@@ -288,6 +289,11 @@ int loop_packet (const u_char *buffer, int tcphdr_len, unsigned int data_len) {
                 connection_list.Act->data.overflow = ntohs(length) - ((int)data_len - i + 4 + tcphdr_len);
             }
             i += ntohs(length) + 4; //jump to another header
+            prev_i = i;
+            found = true;
+        }
+        if (found == true && i != prev_i) {
+            break;
         }
     }
     return payload_size;
@@ -314,8 +320,9 @@ void ssl_connection(const u_char *buffer, unsigned data_len, int tcphdr_len, int
             free(temp_SNI);
         }
         connection_list.Act->data.packets += 1;
-        connection_list.Act->data.size += ntohs(*(uint32_t *) (&buffer[tcphdr_len + 3]));
-        connection_list.Act->data.size += loop_packet(buffer, tcphdr_len+6, data_len);
+        uint32_t length = *(uint32_t *) (&buffer[tcphdr_len + 3]);
+        connection_list.Act->data.size += ntohs(length); 
+        connection_list.Act->data.size += loop_packet(buffer, tcphdr_len + 5 + ntohs(length), data_len);
     }
     else {  //adds info to the current connection, such as size, increment packet count, timestamp
         if (buffer[tcphdr_len] == 0x16 &&   //Handshake type Server-Hello SSLv3 and higher
@@ -329,7 +336,7 @@ void ssl_connection(const u_char *buffer, unsigned data_len, int tcphdr_len, int
         if (segmented_packet == 0) {   //situation when the first SSL header is in the beginning of the TCP payload
             uint32_t length = *(uint32_t *) (&buffer[tcphdr_len + 3]);
             connection_list.Act->data.size += ntohs(length); // add bytes to all data transfered
-            connection_list.Act->data.size += loop_packet(buffer, tcphdr_len, data_len);
+            connection_list.Act->data.size += loop_packet(buffer, tcphdr_len + 5 + ntohs(length), data_len);
         }
         if (segmented_packet != 0) {  //situation when the first SSL header is somewhere in the TCP payload
             connection_list.Act->data.size += segmented_packet; // add bytes to all data transfered
@@ -380,9 +387,7 @@ void tcp_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                 if (connection_list.Act->data.has_syn_ack == false){
                     break;
                 }
-                int overflow = connection_list.Act->data.overflow;
-                int loop_length = loop_packet(buffer, tcphdr_len - 3 + overflow, data_len);
-                connection_list.Act->data.overflow = 0;
+                int loop_length = loop_packet(buffer, tcphdr_len, data_len);
                 if (((buffer[tcphdr_len] == 0x14) ||                       //SSLv3 - TLS1.2
                      (buffer[tcphdr_len] == 0x15) ||
                      (buffer[tcphdr_len] == 0x16) ||
