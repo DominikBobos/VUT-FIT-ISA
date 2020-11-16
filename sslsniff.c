@@ -383,6 +383,10 @@ void tcp_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                 if (tcp_syn == 10){
                     connection_list.Act->data.second_fin = true;
                 }
+                if ((data_len - tcphdr_len) < 5) {
+                	connection_list.Act->data.packets +=1; 
+                	break;
+                }
                 // Condition to find SSL packet in tcp payload
                 // MODIFICATED function from:
                 // SOURCE: https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
