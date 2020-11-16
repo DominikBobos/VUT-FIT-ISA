@@ -380,6 +380,9 @@ void tcp_connection(const u_char *buffer, unsigned data_len, int tcphdr_len,
                 if (tcp_syn == 2){
                     connection_list.Act->data.has_syn_ack = true;
                 }
+                if (tcp_syn == 10){
+                    connection_list.Act->data.second_fin = true;
+                }
                 // Condition to find SSL packet in tcp payload
                 // MODIFICATED function from:
                 // SOURCE: https://www.netmeister.org/blog/tcpdump-ssl-and-tls.html
@@ -459,6 +462,10 @@ int tcp_packet(long time, long microsec, const u_char *buffer, bool ipv6, unsign
     // with the last SSL packet of that connection
     else if (tcph->fin) {
         tcp_connection(buffer, data_len, tcphdr_len, tcph->source, tcph->dest, temp_src, temp_dest, time, microsec, 0);
+        print_data(tcph->source, tcph->dest, temp_src, temp_dest, time, microsec);
+    }
+    else if (tcph->rst) {
+        tcp_connection(buffer, data_len, tcphdr_len, tcph->source, tcph->dest, temp_src, temp_dest, time, microsec, 10);
         print_data(tcph->source, tcph->dest, temp_src, temp_dest, time, microsec);
     }
     // any other tcp packet
@@ -587,7 +594,7 @@ int main(int argc, char *argv[])
 	char *rfile = malloc(1001 * sizeof(char));	//pcapng file
 	if (iface == NULL) { return 1; }                //malloc error
 	if (rfile == NULL) { return 1; }                //malloc error
-    //TODO check file validity to be more robust
+
 	int args = args_parse(argc, argv, iface, rfile);
 	if (args == 1 || args == 0) {
 		free(iface);
