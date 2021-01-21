@@ -1,3 +1,5 @@
+# 17/20b
+
 # VUT-FIT-ISA
 
 ## Popis:
